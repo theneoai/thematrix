@@ -126,8 +126,9 @@ export class WorkflowEngine {
     logger.info(`Workflow ${definition.id} started (run: ${runId})`);
 
     // 设置全局超时
+    let timeoutHandle: ReturnType<typeof setTimeout>;
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => {
+      timeoutHandle = setTimeout(() => {
         reject(new WorkflowError(
           `Workflow timed out after ${this.globalTimeoutMs}ms`,
           definition.id,
@@ -141,10 +142,16 @@ export class WorkflowEngine {
       ? this.executeDAG(definition, run)
       : this.executeStateMachine(definition, run);
 
-    // 竞争执行和超时
+    // 竞争执行和超时，完成后清除计时器
     Promise.race([executionPromise, timeoutPromise])
-      .then(() => this.completeWorkflow(runId))
-      .catch(error => this.handleWorkflowError(runId, error));
+      .then(() => {
+        clearTimeout(timeoutHandle);
+        return this.completeWorkflow(runId);
+      })
+      .catch(error => {
+        clearTimeout(timeoutHandle);
+        return this.handleWorkflowError(runId, error);
+      });
 
     return run;
   }
@@ -373,19 +380,19 @@ export class WorkflowEngine {
 
     const sm = definition.stateMachine;
     let currentState = sm.initialState;
-    const visitedStates = new Set<string>();
+    const maxSteps = Object.keys(sm.states).length * 100;
+    let steps = 0;
     const abortController = this.abortControllers.get(run.runId)!;
 
     while (!abortController.signal.aborted) {
-      // 防止无限循环
-      if (visitedStates.has(currentState)) {
+      // 防止无限循环：最大步数为状态数的100倍
+      if (++steps > maxSteps) {
         throw new WorkflowError(
-          `Infinite loop detected in state machine at state: ${currentState}`,
+          `Infinite loop detected in state machine: exceeded ${maxSteps} steps`,
           definition.id,
           run.runId
         );
       }
-      visitedStates.add(currentState);
 
       const state = sm.states[currentState];
       if (!state) {
@@ -629,9 +636,6 @@ export class WorkflowEngine {
     if (!run) return;
 
     const errorMessage = error instanceof Error ? error.message : String(error);
-    run.status = 'failed';
-    run.error = errorMessage;
-    run.completedAt = new Date();
 
     await this.publishEvent(EventTypes.WORKFLOW_NODE_FAILED, {
       workflowId: run.workflowId,
@@ -640,21 +644,7 @@ export class WorkflowEngine {
       error: errorMessage,
     });
 
-    await this.publishEvent(EventTypes.WORKFLOW_FAILED, {
-      workflowId: run.workflowId,
-      runId,
-      error: errorMessage,
-      nodeId,
-    });
-
-    const duration = run.completedAt.getTime() - (run.startedAt?.getTime() ?? 0);
-    metrics.observe(Metrics.WORKFLOW_RUN_DURATION, duration / 1000, {
-      workflow_id: run.workflowId,
-      status: 'failed',
-    });
-
-    this.cleanup(runId);
-    logger.error(`Workflow ${run.workflowId} failed at node ${nodeId}:`, error);
+    logger.error(`Workflow ${run.workflowId} node ${nodeId} failed:`, error);
   }
 
   private async handleWorkflowError(runId: string, error: unknown): Promise<void> {

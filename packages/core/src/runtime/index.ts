@@ -152,13 +152,12 @@ export class Runtime {
       throw new Error('Runtime is not running');
     }
 
-    // 注册 agent 别名映射
-    const agentIdMap = new Map<string, string>();
+    // 注册 agent 别名映射到共享的 agentIdMap
     for (const [name, ref] of Object.entries(definition.agents)) {
       // 简化：假设 ref.ref 是 agent ID 或文件路径
       const agentId = ref.ref.replace('./', '').replace('.agent.yaml', '');
-      agentIdMap.set(name, agentId);
-      agentIdMap.set(ref.ref, agentId);
+      this.agentIdMap.set(name, agentId);
+      this.agentIdMap.set(ref.ref, agentId);
     }
 
     const run = await this.workflowEngine.startWorkflow(definition, input);

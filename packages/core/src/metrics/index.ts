@@ -234,3 +234,5 @@ metrics.registerCounter(Metrics.LLM_REQUESTS_TOTAL, 'Total number of LLM request
 metrics.registerHistogram(Metrics.LLM_REQUEST_DURATION, 'LLM request duration in seconds');
 metrics.registerCounter(Metrics.LLM_TOKENS_INPUT, 'Total number of input tokens');
 metrics.registerCounter(Metrics.LLM_TOKENS_OUTPUT, 'Total number of output tokens');
+metrics.registerCounter(Metrics.EVENTS_PUBLISHED, 'Total number of events published');
+metrics.registerCounter(Metrics.MEMORY_OPERATIONS, 'Total number of memory operations');
