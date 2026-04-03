@@ -200,8 +200,9 @@ export function createWorkflowCommand(): Command {
         
         updateSpinner('Initializing runtime...');
         
-        // Create runtime
+        // Create and start runtime
         const runtime = new Runtime({ dbPath: './data/runtime.db' });
+        await runtime.start();
         
         // Load and register agents
         for (const [name, ref] of Object.entries(definition.agents)) {
@@ -244,7 +245,7 @@ export function createWorkflowCommand(): Command {
           console.log(chalk.yellow(`\n⏳ Workflow is still running: ${finalRun?.status}`));
         }
         
-        runtime.close();
+        await runtime.stop();
       } catch (error) {
         stopSpinner(false, 'Failed to run workflow');
         if (error instanceof ConfigValidationError) {

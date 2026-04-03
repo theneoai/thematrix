@@ -1,15 +1,49 @@
 /**
- * TheMatrix Runtime - 简化版运行时入口
+ * TheMatrix Runtime - 生产级运行时入口
  */
 import type { WorkflowDefinition, AgentDefinition } from '@thematrix/types';
-import { EventBus, SQLiteEventStore, MemoryManager, AgentRegistry, WorkflowEngine } from '../index.js';
+import { 
+  EventBus, 
+  SQLiteEventStore, 
+  MemoryManager, 
+  AgentRegistry, 
+  WorkflowEngine,
+  HealthMonitor,
+  createDefaultHealthChecks,
+  metrics,
+  Metrics,
+  type WorkflowError,
+} from '../index.js';
 import { Logger } from '@thematrix/utils';
 import { MockLLMAdapter } from '@thematrix/adapters';
 
 const logger = new Logger({ prefix: 'Runtime' });
 
 export interface RuntimeOptions {
+  /**
+   * 数据库路径
+   */
   dbPath?: string;
+  /**
+   * 全局超时时间（毫秒）
+   */
+  globalTimeoutMs?: number;
+  /**
+   * 最大并发工作流数
+   */
+  maxConcurrentWorkflows?: number;
+  /**
+   * 版本号
+   */
+  version?: string;
+}
+
+export interface RuntimeStatus {
+  status: 'running' | 'stopped' | 'error';
+  version: string;
+  uptimeSeconds: number;
+  activeWorkflows: number;
+  totalWorkflows: number;
 }
 
 export class Runtime {
@@ -17,9 +51,16 @@ export class Runtime {
   private memory: MemoryManager;
   private agentRegistry: AgentRegistry;
   private workflowEngine: WorkflowEngine;
+  private healthMonitor: HealthMonitor;
+  private startTime: Date;
+  private version: string;
+  private _status: RuntimeStatus['status'] = 'stopped';
   private agentIdMap = new Map<string, string>();
 
   constructor(options: RuntimeOptions = {}) {
+    this.version = options.version ?? '0.1.0';
+    this.startTime = new Date();
+    
     const eventStore = new SQLiteEventStore(options.dbPath ?? ':memory:');
     this.eventBus = new EventBus(eventStore);
     this.memory = new MemoryManager({ dbPath: options.dbPath ?? ':memory:' });
@@ -31,26 +72,93 @@ export class Runtime {
       agentRegistry: this.agentRegistry,
       llmAdapterFactory: () => new MockLLMAdapter(),
       agentIdMap: this.agentIdMap,
+      globalTimeoutMs: options.globalTimeoutMs,
+      maxConcurrentWorkflows: options.maxConcurrentWorkflows,
     });
+
+    this.healthMonitor = new HealthMonitor(this.version);
+    
+    // 注册默认健康检查
+    const healthChecks = createDefaultHealthChecks(this.memory, { dbPath: options.dbPath });
+    for (const check of healthChecks) {
+      this.healthMonitor.register(check);
+    }
   }
 
+  /**
+   * 启动运行时
+   */
+  async start(): Promise<void> {
+    logger.info(`Starting TheMatrix Runtime v${this.version}`);
+    this._status = 'running';
+    
+    // 运行初始健康检查
+    const health = await this.healthMonitor.runAllChecks();
+    if (health.status === 'unhealthy') {
+      logger.error('Initial health check failed:', health.checks);
+      throw new Error('System is unhealthy');
+    }
+    
+    logger.info('Runtime started successfully');
+  }
+
+  /**
+   * 停止运行时
+   */
+  async stop(): Promise<void> {
+    logger.info('Stopping TheMatrix Runtime');
+    this._status = 'stopped';
+    
+    // 取消所有运行中的工作流
+    const runs = this.workflowEngine.getRuns();
+    for (const run of runs) {
+      if (run.status === 'running') {
+        await this.workflowEngine.cancelWorkflow(run.runId);
+      }
+    }
+    
+    this.healthMonitor.dispose();
+    this.memory.close();
+    
+    logger.info('Runtime stopped');
+  }
+
+  /**
+   * 注册 Agent
+   */
   registerAgent(definition: AgentDefinition, aliases?: string[]): void {
     this.agentRegistry.register(definition);
-    // Register aliases (e.g., file paths) that map to this agent ID
     if (aliases) {
+      // 将别名映射到 agent ID
       for (const alias of aliases) {
         this.agentIdMap.set(alias, definition.id);
       }
     }
+    
+    metrics.inc(Metrics.AGENT_RUNS_TOTAL, { 
+      agent_id: definition.id,
+      operation: 'register' 
+    });
   }
 
-  async runWorkflow(definition: WorkflowDefinition, input: Record<string, unknown>) {
-    // Register agent name mappings from workflow
+  /**
+   * 运行工作流
+   */
+  async runWorkflow(
+    definition: WorkflowDefinition, 
+    input: Record<string, unknown>
+  ) {
+    if (this._status !== 'running') {
+      throw new Error('Runtime is not running');
+    }
+
+    // 注册 agent 别名映射
+    const agentIdMap = new Map<string, string>();
     for (const [name, ref] of Object.entries(definition.agents)) {
-      // Map the agent name to the resolved agent ID if we have it
-      if (!this.agentIdMap.has(name) && this.agentIdMap.has(ref.ref)) {
-        this.agentIdMap.set(name, this.agentIdMap.get(ref.ref)!);
-      }
+      // 简化：假设 ref.ref 是 agent ID 或文件路径
+      const agentId = ref.ref.replace('./', '').replace('.agent.yaml', '');
+      agentIdMap.set(name, agentId);
+      agentIdMap.set(ref.ref, agentId);
     }
 
     const run = await this.workflowEngine.startWorkflow(definition, input);
@@ -60,27 +168,73 @@ export class Runtime {
     return run;
   }
 
+  /**
+   * 获取工作流运行状态
+   */
   getWorkflowRun(runId: string) {
     return this.workflowEngine.getRun(runId);
   }
 
+  /**
+   * 获取所有工作流运行
+   */
   getAllRuns() {
     return this.workflowEngine.getRuns();
   }
 
-  async pauseWorkflow(runId: string) {
+  /**
+   * 暂停工作流
+   */
+  async pauseWorkflow(runId: string): Promise<void> {
     await this.workflowEngine.pauseWorkflow(runId);
   }
 
-  async resumeWorkflow(runId: string) {
+  /**
+   * 恢复工作流
+   */
+  async resumeWorkflow(runId: string): Promise<void> {
     await this.workflowEngine.resumeWorkflow(runId);
   }
 
-  async cancelWorkflow(runId: string) {
+  /**
+   * 取消工作流
+   */
+  async cancelWorkflow(runId: string): Promise<void> {
     await this.workflowEngine.cancelWorkflow(runId);
   }
 
-  close(): void {
-    this.memory.close();
+  /**
+   * 获取运行时状态
+   */
+  getStatus(): RuntimeStatus {
+    const runs = this.workflowEngine.getRuns();
+    return {
+      status: this._status,
+      version: this.version,
+      uptimeSeconds: Math.floor((Date.now() - this.startTime.getTime()) / 1000),
+      activeWorkflows: runs.filter(r => r.status === 'running').length,
+      totalWorkflows: runs.length,
+    };
+  }
+
+  /**
+   * 获取健康状态
+   */
+  async getHealth() {
+    return this.healthMonitor.runAllChecks();
+  }
+
+  /**
+   * 获取指标
+   */
+  getMetrics(): string {
+    return metrics.getMetrics();
+  }
+
+  /**
+   * 订阅事件
+   */
+  subscribeToEvents(pattern: string, handler: (event: unknown) => void) {
+    return this.eventBus.subscribe(pattern, handler);
   }
 }
