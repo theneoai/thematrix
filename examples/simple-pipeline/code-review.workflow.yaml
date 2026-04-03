@@ -1,0 +1,85 @@
+id: simple-code-review
+name: Simple Code Review Pipeline
+version: "1.0.0"
+description: "A simple 3-stage code review pipeline"
+mode: dag
+
+agents:
+  analyzer:
+    ref: ./analyzer.agent.yaml
+  security-reviewer:
+    ref: ./reviewer.agent.yaml
+    overrides:
+      persona:
+        systemPrompt: |
+          You are a security-focused code reviewer. Review the provided code analysis
+          and identify security vulnerabilities, authentication issues, and data exposure risks.
+  performance-reviewer:
+    ref: ./reviewer.agent.yaml
+    overrides:
+      persona:
+        systemPrompt: |
+          You are a performance-focused code reviewer. Review the provided code analysis
+          and identify performance bottlenecks, inefficient algorithms, and resource leaks.
+  summarizer:
+    ref: ./summarizer.agent.yaml
+
+dag:
+  nodes:
+    - id: analyze
+      agentId: analyzer
+      type: task
+      inputMapping:
+        code: "$.input.code"
+      retry:
+        maxRetries: 2
+        retryDelayMs: 1000
+    
+    - id: review-security
+      agentId: security-reviewer
+      type: task
+      inputMapping:
+        analysis: "$.nodes.analyze.output"
+      retry:
+        maxRetries: 1
+        retryDelayMs: 500
+    
+    - id: review-performance
+      agentId: performance-reviewer
+      type: task
+      inputMapping:
+        analysis: "$.nodes.analyze.output"
+      retry:
+        maxRetries: 1
+        retryDelayMs: 500
+    
+    - id: summarize
+      agentId: summarizer
+      type: task
+      inputMapping:
+        securityReview: "$.nodes.review-security.output"
+        performanceReview: "$.nodes.review-performance.output"
+  
+  edges:
+    - from: analyze
+      to: review-security
+    - from: analyze
+      to: review-performance
+    - from: review-security
+      to: summarize
+    - from: review-performance
+      to: summarize
+
+sharedMemory:
+  kvStore: sqlite
+  persistent: true
+
+schedule:
+  maxDurationMs: 300000
+
+inputSchema:
+  type: object
+  properties:
+    code:
+      type: string
+  required: [code]
