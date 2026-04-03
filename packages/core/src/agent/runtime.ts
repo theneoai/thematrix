@@ -126,20 +126,63 @@ export class AgentRuntime {
 
       this.metrics.totalTokens += response.usage.totalTokens;
 
-      // Handle tool calls if any
+      // Agentic tool-use loop: execute tool calls and feed results back to LLM
       let finalContent = response.content;
-      if (response.toolCalls && response.toolCalls.length > 0) {
-        const toolResults = await this.executeToolCalls(response.toolCalls);
-        
-        // Store tool results
+      let currentResponse = response;
+
+      while (currentResponse.toolCalls && currentResponse.toolCalls.length > 0) {
+        const toolResults = await this.executeToolCalls(currentResponse.toolCalls);
+
         for (const result of toolResults) {
           if (result.content.startsWith('Error:') || result.content.startsWith('Tool not found:')) {
             this.metrics.errors++;
           }
         }
+
+        // Append assistant message with tool calls to history
+        await this.memory.appendTurn(this.instanceId, {
+          turnId: generateId(),
+          role: 'assistant',
+          content: currentResponse.content,
+          toolCalls: currentResponse.toolCalls,
+          timestamp: new Date(),
+        });
+
+        // Append tool results as a tool turn
+        await this.memory.appendTurn(this.instanceId, {
+          turnId: generateId(),
+          role: 'tool',
+          content: JSON.stringify(toolResults),
+          toolResults,
+          timestamp: new Date(),
+        });
+
+        // Re-fetch history and call LLM again with tool results
+        const updatedHistory = await this.memory.getHistory(this.instanceId);
+        const updatedMessages: { role: 'system' | 'user' | 'assistant' | 'tool'; content: string }[] = [
+          { role: 'system', content: this.definition.persona.systemPrompt },
+          ...updatedHistory.map(h => ({ role: h.role as 'user' | 'assistant' | 'tool', content: h.content })),
+        ];
+
+        currentResponse = await withRetry(
+          () => timeout(
+            this.llmAdapter.chat({
+              model: this.definition.model.model,
+              messages: updatedMessages,
+              temperature: this.definition.persona.temperature,
+              maxTokens: this.definition.model.maxTokens,
+            }),
+            this.definition.turnTimeoutMs,
+            'Agent turn timed out'
+          ),
+          { maxRetries: 2, retryDelayMs: 1000 }
+        );
+
+        this.metrics.totalTokens += currentResponse.usage.totalTokens;
+        finalContent = currentResponse.content;
       }
 
-      // Add assistant response to history
+      // Add final assistant response to history
       await this.memory.appendTurn(this.instanceId, {
         turnId: generateId(),
         role: 'assistant',

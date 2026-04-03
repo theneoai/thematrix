@@ -57,6 +57,7 @@ export class AnthropicAdapter implements LLMAdapter {
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
+    const systemMessage = request.messages.find(m => m.role === 'system');
     const response = await fetch(`${this.config.baseUrl ?? 'https://api.anthropic.com'}/v1/messages`, {
       method: 'POST',
       headers: {
@@ -66,6 +67,7 @@ export class AnthropicAdapter implements LLMAdapter {
       },
       body: JSON.stringify({
         model: request.model || this.config.defaultModel,
+        system: systemMessage?.content,
         messages: this.formatMessages(request.messages),
         max_tokens: request.maxTokens ?? 4096,
         temperature: request.temperature,
@@ -103,6 +105,7 @@ export class AnthropicAdapter implements LLMAdapter {
   }
 
   async *chatStream(request: ChatRequest): AsyncIterable<ChatStreamChunk> {
+    const systemMessage = request.messages.find(m => m.role === 'system');
     const response = await fetch(`${this.config.baseUrl ?? 'https://api.anthropic.com'}/v1/messages`, {
       method: 'POST',
       headers: {
@@ -112,6 +115,7 @@ export class AnthropicAdapter implements LLMAdapter {
       },
       body: JSON.stringify({
         model: request.model || this.config.defaultModel,
+        system: systemMessage?.content,
         messages: this.formatMessages(request.messages),
         max_tokens: request.maxTokens ?? 4096,
         temperature: request.temperature,
