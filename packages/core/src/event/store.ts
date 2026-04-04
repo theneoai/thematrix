@@ -100,17 +100,40 @@ export class SQLiteEventStore implements IEventStore {
   }
 
   async getEventsAfter(eventId: string, filter?: EventFilter): Promise<DomainEvent[]> {
-    const targetEvent = await this.getEventById(eventId);
-    if (!targetEvent) {
-      return [];
+    // Use rowid-based pagination to avoid missing same-millisecond events
+    const rowStmt = this.db.prepare('SELECT rowid FROM events WHERE event_id = ?');
+    const rowRow = rowStmt.get(eventId) as { rowid: number } | undefined;
+    if (!rowRow) return [];
+
+    let sql = 'SELECT * FROM events WHERE rowid > ?';
+    const params: (string | number)[] = [rowRow.rowid];
+
+    if (filter?.type) {
+      sql += ' AND type = ?';
+      params.push(filter.type);
+    }
+    if (filter?.sourceKind) {
+      sql += ' AND source_kind = ?';
+      params.push(filter.sourceKind);
+    }
+    if (filter?.sourceId) {
+      sql += ' AND source_id = ?';
+      params.push(filter.sourceId);
+    }
+    if (filter?.correlationId) {
+      sql += ' AND correlation_id = ?';
+      params.push(filter.correlationId);
+    }
+    if (filter?.toTimestamp) {
+      sql += ' AND timestamp <= ?';
+      params.push(filter.toTimestamp.toISOString());
     }
 
-    const newFilter: EventFilter = {
-      ...filter,
-      fromTimestamp: new Date(targetEvent.timestamp.getTime() + 1),
-    };
+    sql += ' ORDER BY rowid ASC';
 
-    return this.getEvents(newFilter);
+    const stmt = this.db.prepare(sql);
+    const rows = stmt.all(...params) as EventRow[];
+    return rows.map(rowToEvent);
   }
 
   close(): void {

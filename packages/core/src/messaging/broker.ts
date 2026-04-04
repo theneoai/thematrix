@@ -31,19 +31,30 @@ export class MessageBroker implements IMessageBroker {
   async send(message: AgentMessage): Promise<void> {
     const channel = this.getChannel(message.toAgentId, message.workflowRunId);
     this.emitter.emit(channel, message);
-    
+
     // Also emit to broadcast channel if needed
     if (message.toAgentId === '*') {
       this.emitter.emit(`broadcast:${message.workflowRunId}`, message);
     }
-    
+
     logger.debug(`Sent message ${message.messageId} to ${message.toAgentId}`);
+  }
+
+  /**
+   * Signal that no more messages will be sent to an agent on a given workflow run.
+   * This unblocks any `receive()` generator waiting for messages.
+   */
+  stopReceiving(agentId: string, workflowRunId: string): void {
+    const stopChannel = this.getStopChannel(agentId, workflowRunId);
+    this.emitter.emit(stopChannel);
   }
 
   async *receive(agentId: string, workflowRunId: string): AsyncIterable<AgentMessage> {
     const channel = this.getChannel(agentId, workflowRunId);
+    const stopChannel = this.getStopChannel(agentId, workflowRunId);
     const messages: AgentMessage[] = [];
     let resolveNext: ((value: IteratorResult<AgentMessage>) => void) | null = null;
+    let stopped = false;
 
     const handler = (message: AgentMessage) => {
       if (resolveNext) {
@@ -54,22 +65,32 @@ export class MessageBroker implements IMessageBroker {
       }
     };
 
+    const stopHandler = () => {
+      stopped = true;
+      if (resolveNext) {
+        resolveNext({ value: undefined as unknown as AgentMessage, done: true });
+        resolveNext = null;
+      }
+    };
+
     this.emitter.on(channel, handler);
+    this.emitter.once(stopChannel, stopHandler);
 
     try {
-      while (true) {
+      while (!stopped) {
         if (messages.length > 0) {
           yield messages.shift()!;
         } else {
-          const message = await new Promise<IteratorResult<AgentMessage>>((resolve) => {
+          const result = await new Promise<IteratorResult<AgentMessage>>((resolve) => {
             resolveNext = resolve;
           });
-          if (message.done) break;
-          yield message.value;
+          if (result.done) break;
+          yield result.value;
         }
       }
     } finally {
       this.emitter.off(channel, handler);
+      this.emitter.off(stopChannel, stopHandler);
     }
   }
 
@@ -126,6 +147,10 @@ export class MessageBroker implements IMessageBroker {
 
   private getChannel(agentId: string, workflowRunId: string): string {
     return `msg:${workflowRunId}:${agentId}`;
+  }
+
+  private getStopChannel(agentId: string, workflowRunId: string): string {
+    return `stop:${workflowRunId}:${agentId}`;
   }
 
   createMessage(

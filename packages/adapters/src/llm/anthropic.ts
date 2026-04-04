@@ -87,13 +87,13 @@ export class AnthropicAdapter implements LLMAdapter {
       model: data.model,
       content: data.content.find((c) => c.type === 'text')?.text ?? '',
       toolCalls: data.content
-        .filter((c) => c.type === 'tool_use')
+        .filter((c) => c.type === 'tool_use' && c.id && c.name)
         .map((c) => ({
-          id: c.id!,
+          id: c.id as string,
           type: 'function' as const,
           function: {
-            name: c.name!,
-            arguments: JSON.stringify(c.input),
+            name: c.name as string,
+            arguments: JSON.stringify(c.input ?? {}),
           },
         })),
       usage: {
@@ -155,12 +155,12 @@ export class AnthropicAdapter implements LLMAdapter {
               const event = JSON.parse(data) as AnthropicStreamEvent;
               
               if (event.type === 'message_start') {
-                messageId = event.message!.id;
+                messageId = event.message?.id ?? messageId;
               } else if (event.type === 'content_block_delta') {
-                if (event.delta!.type === 'text_delta') {
+                if (event.delta?.type === 'text_delta') {
                   yield {
                     id: messageId,
-                    content: event.delta!.text,
+                    content: event.delta.text,
                   };
                 }
               } else if (event.type === 'message_stop') {

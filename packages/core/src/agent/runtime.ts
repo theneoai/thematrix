@@ -278,6 +278,7 @@ export class AgentRuntime {
   }
 
   async stop(): Promise<void> {
+    if (this.status === 'stopped') return; // idempotent
     this.status = 'stopped';
     this.metrics.endTime = new Date();
     await this.publishEvent(EventTypes.AGENT_STOPPED, {
