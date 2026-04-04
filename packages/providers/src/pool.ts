@@ -209,4 +209,16 @@ export class TokenPool implements ITokenPool {
     state.requestsInWindow += 1;
     state.tokensInWindow += tokens;
   }
+
+  /** Increment concurrent request counter for a provider (call before request) */
+  acquireConcurrent(provider: ProviderName): void {
+    const state = this.rateLimits.get(provider);
+    if (state) state.concurrentRequests += 1;
+  }
+
+  /** Decrement concurrent request counter for a provider (call after request) */
+  releaseConcurrent(provider: ProviderName): void {
+    const state = this.rateLimits.get(provider);
+    if (state && state.concurrentRequests > 0) state.concurrentRequests -= 1;
+  }
 }

@@ -164,6 +164,9 @@ export class CronScheduler {
       } else if (part.includes('-')) {
         // Range: 1-5
         const [start, end] = part.split('-').map(Number);
+        if (isNaN(start) || isNaN(end) || start < min || end > max || start > end) {
+          throw new Error(`Invalid range "${part}" in cron field (valid: ${min}-${max})`);
+        }
         for (let i = start; i <= end; i++) {
           values.add(i);
         }

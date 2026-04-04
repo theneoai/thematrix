@@ -64,8 +64,12 @@ export class SSHExecutionBackend implements ExecutionBackend {
 
     try {
       // 1. Upload the task payload to the remote host
-      const remoteDir = this.config.workDir ?? `/tmp/thematrix/${task.taskId}`;
-      await this.sshExec(`mkdir -p ${remoteDir}`);
+      // Sanitize taskId to prevent shell injection
+      const safeTaskId = task.taskId.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const remoteDir = this.config.workDir
+        ? `${this.config.workDir}/${safeTaskId}`
+        : `/tmp/thematrix/${safeTaskId}`;
+      await this.sshExec(`mkdir -p -- "${remoteDir}"`);
 
       const taskPayload = JSON.stringify({
         taskId: task.taskId,
@@ -76,7 +80,7 @@ export class SSHExecutionBackend implements ExecutionBackend {
       });
 
       // Write payload to remote file via stdin piping
-      await this.sshExec(`cat > ${remoteDir}/task.json`, taskPayload);
+      await this.sshExec(`cat > "${remoteDir}/task.json"`, taskPayload);
 
       // 2. Execute the agent remotely
       record.status = 'running';
@@ -87,8 +91,8 @@ export class SSHExecutionBackend implements ExecutionBackend {
       // Run a minimal script that reads the task payload and executes it.
       // In production, you would have a pre-deployed agent runner binary on the remote host.
       const remoteScript = [
-        `cd ${remoteDir}`,
-        `echo $$ > ${remoteDir}/pid`,
+        `cd "${remoteDir}"`,
+        `echo $$ > "${remoteDir}/pid"`,
         `${nodeCmd} -e "`,
         `const fs = require('fs');`,
         `const task = JSON.parse(fs.readFileSync('task.json', 'utf-8'));`,
@@ -100,7 +104,7 @@ export class SSHExecutionBackend implements ExecutionBackend {
 
       // 3. Try to read the remote PID
       try {
-        const pidOutput = await this.sshExec(`cat ${remoteDir}/pid`);
+        const pidOutput = await this.sshExec(`cat "${remoteDir}/pid"`);
         record.remotePid = parseInt(pidOutput.stdout.trim(), 10) || undefined;
       } catch {
         // PID file may not exist if the command finished too quickly

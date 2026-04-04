@@ -72,7 +72,13 @@ export class WeChatChannelAdapter implements ChannelAdapter {
     const params = [secret, timestamp, nonce].sort();
     const computed = createHash('sha1').update(params.join('')).digest('hex');
 
-    return computed === msgSignature;
+    // Use timing-safe comparison
+    try {
+      const { timingSafeEqual } = require('node:crypto');
+      return timingSafeEqual(Buffer.from(computed, 'hex'), Buffer.from(msgSignature, 'hex'));
+    } catch {
+      return false;
+    }
   }
 
   async sendNotification(target: NotificationTarget, message: NotificationMessage): Promise<void> {

@@ -236,10 +236,19 @@ export class GatewayServer {
     }));
   }
 
-  private readBody(req: IncomingMessage): Promise<Buffer> {
+  private readBody(req: IncomingMessage, maxSize = 10 * 1024 * 1024): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       const chunks: Buffer[] = [];
-      req.on('data', (chunk: Buffer) => chunks.push(chunk));
+      let totalSize = 0;
+      req.on('data', (chunk: Buffer) => {
+        totalSize += chunk.length;
+        if (totalSize > maxSize) {
+          req.destroy();
+          reject(new Error(`Request body exceeds maximum size of ${maxSize} bytes`));
+          return;
+        }
+        chunks.push(chunk);
+      });
       req.on('end', () => resolve(Buffer.concat(chunks)));
       req.on('error', reject);
     });

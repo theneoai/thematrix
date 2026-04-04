@@ -106,7 +106,7 @@ export class ExecutorManager {
     // Fall back: check all backends
     for (const backend of this.backends.values()) {
       const status = await backend.getStatus(taskId);
-      if (status.status !== 'failed' || status.message !== 'Task not found') {
+      if (!(status.status === 'failed' && status.message === 'Task not found')) {
         return status;
       }
     }

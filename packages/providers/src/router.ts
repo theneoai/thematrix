@@ -57,7 +57,30 @@ class TrackedAdapter implements LLMAdapter {
   }
 
   async *chatStream(request: ChatRequest): AsyncIterable<ChatStreamChunk> {
-    yield* this.inner.chatStream(request);
+    let totalContent = '';
+    for await (const chunk of this.inner.chatStream(request)) {
+      if (chunk.content) totalContent += chunk.content;
+      yield chunk;
+    }
+
+    // Estimate token usage from accumulated content for budget tracking
+    const estimatedInputTokens = Math.ceil(
+      request.messages.reduce((sum, m) => sum + m.content.length, 0) / 4
+    );
+    const estimatedOutputTokens = Math.ceil(totalContent.length / 4);
+
+    const consumption: TokenConsumption = {
+      provider: this.provider as ProviderName,
+      model: this.model,
+      inputTokens: estimatedInputTokens,
+      outputTokens: estimatedOutputTokens,
+    };
+
+    try {
+      await this.pool.consume(this.ownerId, consumption);
+    } catch (error) {
+      logger.warn(`Stream token tracking failed for ${this.ownerId}:`, error);
+    }
   }
 
   async countTokens(text: string): Promise<number> {

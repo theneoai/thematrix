@@ -45,11 +45,12 @@ export class HealthAggregator {
       }),
     );
 
-    for (const outcome of settled) {
+    for (let i = 0; i < settled.length; i++) {
+      const outcome = settled[i];
       if (outcome.status === 'fulfilled') {
         results[outcome.value.name] = outcome.value.result;
       } else {
-        const name = entries[settled.indexOf(outcome)]?.[0] ?? 'unknown';
+        const name = entries[i][0];
         results[name] = {
           status: 'unhealthy',
           message: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),

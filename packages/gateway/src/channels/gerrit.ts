@@ -62,7 +62,13 @@ export class GerritChannelAdapter implements ChannelAdapter {
     }
 
     const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
-    return signature === expected;
+    // Use timing-safe comparison
+    try {
+      const { timingSafeEqual } = require('node:crypto');
+      return timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(expected, 'hex'));
+    } catch {
+      return false;
+    }
   }
 
   async sendNotification(target: NotificationTarget, message: NotificationMessage): Promise<void> {

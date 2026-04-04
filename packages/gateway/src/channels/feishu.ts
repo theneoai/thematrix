@@ -84,11 +84,19 @@ export class FeishuChannelAdapter implements ChannelAdapter {
       return false;
     }
 
-    // Feishu signature: sha256(timestamp + nonce + secret + body)
-    const content = `${timestamp}${nonce}${secret}${rawBody.toString('utf-8')}`;
+    // Feishu signature: sha256(timestamp + "\n" + nonce + "\n" + secret + "\n" + body)
+    const content = `${timestamp}\n${nonce}\n${secret}\n${rawBody.toString('utf-8')}`;
     const expected = createHash('sha256').update(content).digest('hex');
 
-    return signature === expected;
+    // Use timing-safe comparison to prevent timing attacks
+    try {
+      return require('node:crypto').timingSafeEqual(
+        Buffer.from(signature, 'hex'),
+        Buffer.from(expected, 'hex'),
+      );
+    } catch {
+      return false;
+    }
   }
 
   async sendNotification(target: NotificationTarget, message: NotificationMessage): Promise<void> {
@@ -111,7 +119,7 @@ export class FeishuChannelAdapter implements ChannelAdapter {
     if (signingSecret) {
       const timestamp = Math.floor(Date.now() / 1000).toString();
       const stringToSign = `${timestamp}\n${signingSecret}`;
-      const sign = createHmac('sha256', '').update(stringToSign).digest('base64');
+      const sign = createHmac('sha256', stringToSign).update('').digest('base64');
       body.timestamp = timestamp;
       body.sign = sign;
     }

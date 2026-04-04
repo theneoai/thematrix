@@ -15,7 +15,7 @@ export interface SchedulerManagerOptions {
     workflowId: string,
     input: Record<string, unknown>,
     triggerInfo: { type: 'cron' | 'event'; sourceId: string; executionId: string },
-  ) => void;
+  ) => void | Promise<void>;
   maxHistorySize?: number;
 }
 
@@ -121,16 +121,22 @@ export class SchedulerManager implements ISchedulerManager {
       this.store.addExecution(execution);
       this.lastTriggerTimes.set(rule.id, Date.now());
 
-      try {
-        this.onWorkflowTrigger(rule.workflowId, input, {
-          type: 'event',
-          sourceId: rule.id,
-          executionId,
+      // Fire and track — handle both sync and async callbacks
+      Promise.resolve()
+        .then(() =>
+          this.onWorkflowTrigger(rule.workflowId, input, {
+            type: 'event',
+            sourceId: rule.id,
+            executionId,
+          }),
+        )
+        .then(() => {
+          this.store.updateExecution(executionId, { status: 'completed' });
+        })
+        .catch((err) => {
+          this.logger.error(`Error triggering workflow for rule ${rule.name}: ${err}`);
+          this.store.updateExecution(executionId, { status: 'failed', error: String(err) });
         });
-      } catch (err) {
-        this.logger.error(`Error triggering workflow for rule ${rule.name}: ${err}`);
-        this.store.updateExecution(executionId, { status: 'failed', error: String(err) });
-      }
     }
   }
 
@@ -168,15 +174,21 @@ export class SchedulerManager implements ISchedulerManager {
 
     this.store.addExecution(execution);
 
-    try {
-      this.onWorkflowTrigger(schedule.workflowId, schedule.input ?? {}, {
-        type: 'cron',
-        sourceId: schedule.id,
-        executionId,
+    // Fire and track — handle both sync and async callbacks
+    Promise.resolve()
+      .then(() =>
+        this.onWorkflowTrigger(schedule.workflowId, schedule.input ?? {}, {
+          type: 'cron',
+          sourceId: schedule.id,
+          executionId,
+        }),
+      )
+      .then(() => {
+        this.store.updateExecution(executionId, { status: 'completed' });
+      })
+      .catch((err) => {
+        this.logger.error(`Error triggering workflow for cron job ${schedule.name}: ${err}`);
+        this.store.updateExecution(executionId, { status: 'failed', error: String(err) });
       });
-    } catch (err) {
-      this.logger.error(`Error triggering workflow for cron job ${schedule.name}: ${err}`);
-      this.store.updateExecution(executionId, { status: 'failed', error: String(err) });
-    }
   }
 }

@@ -210,6 +210,7 @@ export const executionConfigSchema = z.object({
   backend: z.enum(['local', 'docker', 'ssh', 'kubernetes']),
   config: z.record(z.unknown()).optional(),
   parallelism: z.number().optional(),
+  retryOnBackendFailure: z.boolean().optional(),
 });
 
 export const dockerBackendConfigSchema = z.object({
@@ -230,6 +231,14 @@ export const sshBackendConfigSchema = z.object({
   maxConcurrent: z.number().optional(),
 });
 
+export const k8sTolerationSchema = z.object({
+  key: z.string(),
+  operator: z.enum(['Exists', 'Equal']),
+  value: z.string().optional(),
+  effect: z.enum(['NoSchedule', 'PreferNoSchedule', 'NoExecute']),
+  tolerationSeconds: z.number().optional(),
+});
+
 export const k8sBackendConfigSchema = z.object({
   type: z.literal('kubernetes'),
   kubeconfig: z.string().optional(),
@@ -237,6 +246,9 @@ export const k8sBackendConfigSchema = z.object({
   image: z.string(),
   serviceAccount: z.string().optional(),
   nodeSelector: z.record(z.string()).optional(),
+  tolerations: z.array(k8sTolerationSchema).optional(),
+  labels: z.record(z.string()).optional(),
+  annotations: z.record(z.string()).optional(),
   resources: resourceLimitsSchema.optional(),
   imagePullSecrets: z.array(z.string()).optional(),
   ttlAfterFinished: z.number().optional(),

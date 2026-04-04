@@ -36,17 +36,17 @@ export class ProviderRegistry implements IProviderRegistry {
   }
 
   async healthCheckAll(): Promise<HealthStatus[]> {
+    const plugins = this.list();
     const results = await Promise.allSettled(
-      this.list().map(plugin => plugin.healthCheck())
+      plugins.map(plugin => plugin.healthCheck())
     );
 
     return results.map((result, index) => {
-      const plugin = this.list()[index];
       if (result.status === 'fulfilled') {
         return result.value;
       }
       return {
-        provider: plugin.name,
+        provider: plugins[index].name,
         healthy: false,
         message: result.reason instanceof Error ? result.reason.message : String(result.reason),
         checkedAt: new Date(),

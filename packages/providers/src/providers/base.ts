@@ -185,18 +185,29 @@ export class OpenAICompatibleAdapter implements LLMAdapter {
   }
 
   private formatMessages(messages: ChatMessage[]): unknown[] {
-    return messages.map(m => {
-      const msg: Record<string, unknown> = { role: m.role, content: m.content };
-      if (m.toolCalls) msg.tool_calls = m.toolCalls;
-      if (m.toolResults) {
+    return messages.flatMap(m => {
+      // Tool role → one or more tool result messages
+      if (m.role === 'tool' && m.toolResults) {
         return m.toolResults.map(r => ({
           role: 'tool',
           tool_call_id: r.toolCallId,
           content: r.content,
         }));
       }
-      return msg;
-    }).flat();
+
+      const msg: Record<string, unknown> = { role: m.role, content: m.content };
+
+      // Assistant with tool calls → include tool_calls array
+      if (m.role === 'assistant' && m.toolCalls?.length) {
+        msg.tool_calls = m.toolCalls.map(tc => ({
+          id: tc.id,
+          type: tc.type,
+          function: { name: tc.function.name, arguments: tc.function.arguments },
+        }));
+      }
+
+      return [msg];
+    });
   }
 
   private formatTools(tools: ToolDefinition[]): unknown[] {

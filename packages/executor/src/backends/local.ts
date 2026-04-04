@@ -206,16 +206,16 @@ export class LocalExecutionBackend implements ExecutionBackend {
       const inputStr = typeof task.input === 'string' ? task.input : JSON.stringify(task.input);
       const noopAdapter = {
         provider: 'local-executor-noop',
-        chat: async () => ({
+        chat: async (_request: unknown) => ({
           id: task.taskId,
           model: task.agentDefinition.model.model,
           content: inputStr,
           usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
         }),
-        async *chatStream() {
+        async *chatStream(_request: unknown) {
           yield { id: task.taskId, content: inputStr };
         },
-        countTokens: async () => 0,
+        countTokens: async (_text: unknown) => 0,
       };
 
       const runtime = new AgentRuntime({
