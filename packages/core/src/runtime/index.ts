@@ -15,7 +15,7 @@ import {
   type WorkflowError,
 } from '../index.js';
 import { Logger } from '@thematrix/utils';
-import { MockLLMAdapter, AnthropicAdapter, OpenAIAdapter } from '@thematrix/adapters';
+import { MockLLMAdapter, AnthropicAdapter, OpenAIAdapter, KimiAdapter, OpenCodeAdapter, MiniMaxAdapter } from '@thematrix/adapters';
 
 const logger = new Logger({ prefix: 'Runtime' });
 
@@ -89,6 +89,15 @@ export class Runtime {
         }
         if (provider === 'openai' && cfg?.apiKey) {
           return new OpenAIAdapter({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, defaultModel: model });
+        }
+        if (provider === 'kimicode' && cfg?.apiKey) {
+          return new KimiAdapter({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, defaultModel: model });
+        }
+        if (provider === 'opencode' && cfg?.apiKey && cfg?.baseUrl) {
+          return new OpenCodeAdapter({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, defaultModel: model });
+        }
+        if (provider === 'minimax' && cfg?.apiKey) {
+          return new MiniMaxAdapter({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, defaultModel: model });
         }
         // Fallback to mock when no API key configured
         return new MockLLMAdapter();
