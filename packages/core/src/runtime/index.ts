@@ -1,12 +1,12 @@
 /**
  * TheMatrix Runtime - 生产级运行时入口
  */
-import type { WorkflowDefinition, AgentDefinition } from '@thematrix/types';
-import { 
-  EventBus, 
-  SQLiteEventStore, 
-  MemoryManager, 
-  AgentRegistry, 
+import type { WorkflowDefinition, AgentDefinition, LLMAdapter } from '@thematrix/types';
+import {
+  EventBus,
+  SQLiteEventStore,
+  MemoryManager,
+  AgentRegistry,
   WorkflowEngine,
   HealthMonitor,
   createDefaultHealthChecks,
@@ -15,9 +15,15 @@ import {
   type WorkflowError,
 } from '../index.js';
 import { Logger } from '@thematrix/utils';
-import { MockLLMAdapter } from '@thematrix/adapters';
+import { MockLLMAdapter, AnthropicAdapter, OpenAIAdapter } from '@thematrix/adapters';
 
 const logger = new Logger({ prefix: 'Runtime' });
+
+export interface LLMProviderConfig {
+  apiKey?: string;
+  baseUrl?: string;
+  defaultModel?: string;
+}
 
 export interface RuntimeOptions {
   /**
@@ -36,6 +42,10 @@ export interface RuntimeOptions {
    * 版本号
    */
   version?: string;
+  /**
+   * LLM 提供商配置 (provider name → config)
+   */
+  llmProviders?: Record<string, LLMProviderConfig>;
 }
 
 export interface RuntimeStatus {
@@ -66,11 +76,23 @@ export class Runtime {
     this.memory = new MemoryManager({ dbPath: options.dbPath ?? ':memory:' });
     this.agentRegistry = new AgentRegistry();
     
+    const llmProviders = options.llmProviders ?? {};
+
     this.workflowEngine = new WorkflowEngine({
       eventBus: this.eventBus,
       memory: this.memory,
       agentRegistry: this.agentRegistry,
-      llmAdapterFactory: () => new MockLLMAdapter(),
+      llmAdapterFactory: ({ provider, model }): LLMAdapter => {
+        const cfg = llmProviders[provider];
+        if (provider === 'anthropic' && cfg?.apiKey) {
+          return new AnthropicAdapter({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, defaultModel: model });
+        }
+        if (provider === 'openai' && cfg?.apiKey) {
+          return new OpenAIAdapter({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, defaultModel: model });
+        }
+        // Fallback to mock when no API key configured
+        return new MockLLMAdapter();
+      },
       agentIdMap: this.agentIdMap,
       globalTimeoutMs: options.globalTimeoutMs,
       maxConcurrentWorkflows: options.maxConcurrentWorkflows,
