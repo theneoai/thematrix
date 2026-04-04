@@ -37,19 +37,83 @@ pnpm build
 ### 初始化项目
 
 ```bash
-# 创建新项目
-matrix init my-project
+# 方式 1: 使用 wrapper 脚本 (最简单)
+./matrix init my-project
 cd my-project
 
-# 查看创建的 Agent
-matrix agent list
+# 方式 2: 使用 pnpm exec
+pnpm exec matrix init my-project
+cd my-project
 
-# 验证配置
-matrix agent validate agents/hello.agent.yaml
-matrix workflow validate workflows/hello.workflow.yaml
+# 方式 3: 全局链接后直接使用 (推荐)
+cd apps/cli && pnpm link --global
+matrix init my-project
+```
 
-# 运行工作流
-matrix workflow run hello-world --input input.json
+查看创建的 Agent：
+```bash
+./matrix agent list
+```
+
+验证配置：
+```bash
+./matrix agent validate agents/hello.agent.yaml
+./matrix workflow validate workflows/hello.workflow.yaml
+```
+
+运行工作流：
+```bash
+./matrix workflow run hello-world --input input.json
+```
+
+### 使用 CLI 的多种方式
+
+由于项目使用 pnpm workspaces，有以下几种方式使用 `matrix` 命令：
+
+**方式 1: Wrapper 脚本 (推荐开发时使用)**
+```bash
+# 项目根目录提供了 ./matrix 脚本
+./matrix --help
+./matrix init my-project
+./matrix workflow run code-review --input input.json
+```
+
+**方式 2: pnpm exec**
+```bash
+# 无需全局安装，使用 pnpm 运行
+pnpm exec matrix --help
+pnpm matrix --help  # 简写形式
+```
+
+**方式 3: 全局链接 (推荐日常使用)**
+```bash
+# 链接到全局，之后可以在任何地方使用
+cd apps/cli
+pnpm link --global
+
+# 现在可以在任何地方直接使用
+matrix --help
+matrix init my-project
+```
+
+**方式 4: 直接运行构建文件**
+```bash
+node apps/cli/dist/index.js --help
+```
+
+**方式 5: 设置别名**
+```bash
+# 添加到 ~/.bashrc 或 ~/.zshrc
+alias matrix='pnpm exec matrix'
+
+# 然后重载配置
+source ~/.bashrc  # 或 source ~/.zshrc
+```
+
+**一键设置脚本：**
+```bash
+# 运行设置脚本选择使用方式
+source ./setup.sh
 ```
 
 ### 定义 Agent
