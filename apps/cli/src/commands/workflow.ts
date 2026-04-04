@@ -222,14 +222,31 @@ export function createWorkflowCommand(): Command {
         const run = await runtime.runWorkflow(definition, input);
         
         stopSpinner(true, `Workflow started: ${run.runId}`);
-        
+
         console.log(chalk.green(`\nWorkflow run ID: ${run.runId}`));
         console.log(chalk.gray(`Status: ${run.status}`));
-        
-        // Wait a bit for workflow to complete (in production, this would poll)
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        const finalRun = runtime.getWorkflowRun(run.runId);
+
+        // Poll until the workflow reaches a terminal state
+        const POLL_INTERVAL_MS = 500;
+        const POLL_TIMEOUT_MS = (definition.timeoutMs ?? 300000) + 5000;
+        const pollStart = Date.now();
+        let finalRun = runtime.getWorkflowRun(run.runId);
+
+        while (
+          finalRun &&
+          finalRun.status !== 'completed' &&
+          finalRun.status !== 'failed' &&
+          finalRun.status !== 'cancelled' &&
+          finalRun.status !== 'timed_out'
+        ) {
+          if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
+            console.log(chalk.yellow('\n⏳ Timed out waiting for workflow to complete'));
+            break;
+          }
+          await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+          finalRun = runtime.getWorkflowRun(run.runId);
+        }
+
         if (finalRun?.status === 'completed') {
           console.log(chalk.green('\n✓ Workflow completed successfully'));
           if (finalRun.output) {
@@ -241,6 +258,8 @@ export function createWorkflowCommand(): Command {
           if (finalRun.error) {
             console.log(chalk.red(`Error: ${finalRun.error}`));
           }
+        } else if (finalRun?.status === 'cancelled') {
+          console.log(chalk.yellow('\n⚠ Workflow was cancelled'));
         } else {
           console.log(chalk.yellow(`\n⏳ Workflow is still running: ${finalRun?.status}`));
         }

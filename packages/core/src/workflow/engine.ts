@@ -1,10 +1,9 @@
 /**
  * Workflow Engine - 工作流引擎 (Production Ready)
  */
-import type { 
-  WorkflowDefinition, 
-  WorkflowRun, 
-  WorkflowStatus,
+import type {
+  WorkflowDefinition,
+  WorkflowRun,
   WorkflowContext,
   DAGNode,
   IEventBus,
@@ -14,16 +13,11 @@ import type {
   DomainEvent,
 } from '@thematrix/types';
 import { EventTypes } from '@thematrix/types';
-import { Logger, generateWorkflowRunId, withRetry, sleep } from '@thematrix/utils';
+import { Logger, generateWorkflowRunId, sleep } from '@thematrix/utils';
 import { generateId } from '@thematrix/utils';
-import { AgentRuntime, type ToolHandler } from '../agent/runtime.js';
+import { AgentRuntime } from '../agent/runtime.js';
 import { AgentRegistry } from '../agent/registry.js';
-import { 
-  WorkflowError, 
-  classifyError, 
-  ErrorRecoveryStrategy,
-  type ErrorClassification 
-} from '../error/index.js';
+import { WorkflowError, ResourceNotFoundError, classifyError } from '../error/index.js';
 import { metrics, Metrics } from '../metrics/index.js';
 
 const logger = new Logger({ prefix: 'WorkflowEngine' });
@@ -253,29 +247,17 @@ export class WorkflowEngine {
           durationMs: Date.now() - nodeStartTime,
         });
 
-        // 触发依赖节点
+        // 触发依赖节点，子节点错误已通过 failedNodes 追踪，此处只等待完成
         const depsOfNode = dependents.get(node.id) ?? new Set();
         await Promise.all(Array.from(depsOfNode).map(dependentId => {
           const dependentNode = dag.nodes.find(n => n.id === dependentId);
           if (dependentNode) {
-            return executeNode(dependentNode).catch(error => {
-              logger.error(`Failed to execute dependent node ${dependentId}:`, error);
+            return executeNode(dependentNode).catch(() => {
+              // 错误已在 executeNode 的 catch 块中记录到 failedNodes
+              // 不重新抛出，以允许其他并行分支继续执行
             });
           }
         }));
-
-        // 检查是否全部完成
-        if (completedNodes.size + failedNodes.size === dag.nodes.length) {
-          if (failedNodes.size > 0) {
-            throw new WorkflowError(
-              `${failedNodes.size} node(s) failed`,
-              definition.id,
-              run.runId,
-              { failedNodes: Array.from(failedNodes) }
-            );
-          }
-          // 全部成功完成
-        }
       } catch (error) {
         runningNodes.delete(node.id);
         failedNodes.add(node.id);
@@ -292,8 +274,20 @@ export class WorkflowEngine {
       }
     };
 
-    // 启动根节点
-    await Promise.all(readyNodes.map(node => executeNode(node)));
+    // 启动根节点，根节点错误通过 failedNodes 追踪
+    await Promise.all(readyNodes.map(node => executeNode(node).catch(() => {
+      // 错误已记录到 failedNodes
+    })));
+
+    // 所有节点执行完毕后统一检查是否有失败
+    if (failedNodes.size > 0) {
+      throw new WorkflowError(
+        `${failedNodes.size} node(s) failed`,
+        definition.id,
+        run.runId,
+        { failedNodes: Array.from(failedNodes) }
+      );
+    }
   }
 
   private async executeNodeWithRetry(
@@ -724,6 +718,11 @@ export class WorkflowEngine {
       throw new WorkflowError(`Workflow ${runId} not found`, 'unknown', runId);
     }
 
+    // Guard: only cancel runs that are still active
+    if (run.status !== 'running' && run.status !== 'paused') {
+      return;
+    }
+
     run.status = 'cancelled';
     run.completedAt = new Date();
 
@@ -786,6 +785,3 @@ export class WorkflowEngine {
     await this.eventBus.publish(event);
   }
 }
-
-// 需要导入 ResourceNotFoundError
-import { ResourceNotFoundError } from '../error/index.js';

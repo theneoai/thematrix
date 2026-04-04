@@ -165,7 +165,17 @@ export async function loadConfig(configPath?: string): Promise<RuntimeConfig> {
  * 从环境变量加载配置
  */
 function loadConfigFromEnv(baseConfig: RuntimeConfig): RuntimeConfig {
-  const config = { ...baseConfig };
+  // Deep-clone nested objects to avoid mutating the passed-in baseConfig
+  const config: RuntimeConfig = {
+    ...baseConfig,
+    logging: { ...baseConfig.logging },
+    database: { ...baseConfig.database },
+    workflow: { ...baseConfig.workflow },
+    agent: { ...baseConfig.agent },
+    llm: { ...baseConfig.llm, providers: { ...baseConfig.llm.providers } },
+    security: { ...baseConfig.security, apiKeys: [...baseConfig.security.apiKeys] },
+    monitoring: { ...baseConfig.monitoring },
+  };
 
   // 环境
   if (process.env.MATRIX_ENV) {

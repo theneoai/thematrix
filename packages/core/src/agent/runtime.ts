@@ -101,9 +101,9 @@ export class AgentRuntime {
       const history = await this.memory.getHistory(this.instanceId);
       
       // Build messages for LLM
-      const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
+      const messages: { role: 'system' | 'user' | 'assistant' | 'tool'; content: string }[] = [
         { role: 'system', content: this.definition.persona.systemPrompt },
-        ...history.map(h => ({ role: h.role as 'user' | 'assistant', content: h.content })),
+        ...history.map(h => ({ role: h.role as 'user' | 'assistant' | 'tool', content: h.content })),
       ];
 
       // Call LLM
