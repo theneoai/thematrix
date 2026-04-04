@@ -74,6 +74,9 @@ export class LocalExecutionBackend implements ExecutionBackend {
 
       logger.info(`Task ${task.taskId} completed in ${metrics.durationMs}ms`);
 
+      // Schedule task record cleanup to prevent unbounded memory growth
+      this.scheduleTaskCleanup(task.taskId);
+
       return {
         taskId: task.taskId,
         status: 'completed',
@@ -91,6 +94,9 @@ export class LocalExecutionBackend implements ExecutionBackend {
 
       logger.error(`Task ${task.taskId} ${record.status}: ${errorMessage}`);
 
+      // Schedule task record cleanup to prevent unbounded memory growth
+      this.scheduleTaskCleanup(task.taskId);
+
       return {
         taskId: task.taskId,
         status: record.status,
@@ -102,6 +108,13 @@ export class LocalExecutionBackend implements ExecutionBackend {
         },
       };
     }
+  }
+
+  /** Clean up task record after a retention period to prevent memory leaks */
+  private scheduleTaskCleanup(taskId: string, delayMs = 3_600_000): void {
+    setTimeout(() => {
+      this.tasks.delete(taskId);
+    }, delayMs);
   }
 
   async cancel(taskId: string): Promise<void> {
@@ -184,8 +197,9 @@ export class LocalExecutionBackend implements ExecutionBackend {
 
     // Create a timeout promise if timeout is specified
     const timeoutMs = task.timeout ?? 300_000; // default 5 minutes
+    let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error(`Task timed out after ${timeoutMs}ms`)), timeoutMs);
+      timeoutTimer = setTimeout(() => reject(new Error(`Task timed out after ${timeoutMs}ms`)), timeoutMs);
     });
 
     // The actual agent execution
@@ -234,6 +248,10 @@ export class LocalExecutionBackend implements ExecutionBackend {
     })();
 
     // Race execution against abort and timeout
-    return Promise.race([executionPromise, abortPromise, timeoutPromise]);
+    try {
+      return await Promise.race([executionPromise, abortPromise, timeoutPromise]);
+    } finally {
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+    }
   }
 }

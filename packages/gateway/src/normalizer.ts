@@ -66,12 +66,17 @@ function extractMetadata(
  * Resolve a simple dot-path from an object (e.g., "change.project" from a nested object).
  * This is a lightweight alternative to full JSONPath for common use cases.
  */
+const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 export function resolvePath(obj: unknown, path: string): unknown {
   const parts = path.split('.');
   let current: unknown = obj;
 
   for (const part of parts) {
     if (current == null || typeof current !== 'object') {
+      return undefined;
+    }
+    if (DANGEROUS_KEYS.has(part)) {
       return undefined;
     }
     current = (current as Record<string, unknown>)[part];

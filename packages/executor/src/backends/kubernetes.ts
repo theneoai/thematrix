@@ -446,6 +446,7 @@ export class K8sExecutionBackend implements ExecutionBackend {
       method,
       headers,
       body: body ?? undefined,
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (!response.ok) {

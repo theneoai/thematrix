@@ -52,6 +52,7 @@ export class SchedulerManager implements ISchedulerManager {
 
   removeTriggerRule(id: string): void {
     this.triggerMatcher.removeRule(id);
+    this.lastTriggerTimes.delete(id);
   }
 
   listJobs(): CronSchedule[] {

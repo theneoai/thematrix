@@ -87,6 +87,11 @@ export class TriggerMatcher {
 
       case 'matches': {
         if (typeof fieldValue !== 'string' || typeof condition.value !== 'string') return false;
+        // Guard against ReDoS by limiting field value length
+        if (fieldValue.length > 10_000) {
+          this.logger.warn(`Field value too long for regex matching: ${fieldValue.length} chars`);
+          return false;
+        }
         try {
           const regex = new RegExp(condition.value);
           return regex.test(fieldValue);

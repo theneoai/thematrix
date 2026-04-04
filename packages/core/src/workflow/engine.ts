@@ -827,6 +827,11 @@ export class WorkflowEngine {
     this.activeAgents.delete(runId);
     this.abortControllers.delete(runId);
     this.runStats.delete(runId);
+    // Clean up completed run from runs map after a retention period (1 hour)
+    // to allow status queries shortly after completion, but prevent unbounded growth.
+    setTimeout(() => {
+      this.runs.delete(runId);
+    }, 3_600_000);
     this.activeWorkflowCount--;
     metrics.set(Metrics.WORKFLOW_RUNS_ACTIVE, this.activeWorkflowCount);
   }

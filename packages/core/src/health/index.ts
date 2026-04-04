@@ -70,12 +70,14 @@ export class HealthMonitor {
     const startTime = Date.now();
     try {
       const timeoutMs = config.timeoutMs ?? 5000;
+      let timer: ReturnType<typeof setTimeout> | undefined;
       const result = await Promise.race([
         config.check(),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Health check timeout')), timeoutMs)
-        ),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('Health check timeout')), timeoutMs);
+        }),
       ]);
+      if (timer) clearTimeout(timer);
       
       this.lastResults.set(name, result);
       return result;

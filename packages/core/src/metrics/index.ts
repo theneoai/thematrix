@@ -89,6 +89,11 @@ export class MetricsCollector {
     const current = this.histograms.get(key) ?? { values: [], sum: 0 };
     current.values.push(value);
     current.sum += value;
+    // Cap values array to prevent unbounded memory growth
+    if (current.values.length > 10_000) {
+      const removed = current.values.splice(0, current.values.length - 10_000);
+      current.sum -= removed.reduce((a, b) => a + b, 0);
+    }
     this.histograms.set(key, current);
   }
 

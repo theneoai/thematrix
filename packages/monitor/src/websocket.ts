@@ -74,6 +74,7 @@ export class SSEManager {
     const data = JSON.stringify(event);
     let sent = 0;
 
+    const broken: ServerResponse[] = [];
     for (const res of this.connections) {
       const sseRes = res as SSEResponse;
       // If client subscribed to specific types, filter
@@ -87,9 +88,12 @@ export class SSEManager {
         res.write(`data: ${data}\n\n`);
         sent++;
       } catch {
-        // Connection broken, remove it
-        this.removeConnection(res);
+        // Connection broken, collect for removal after iteration
+        broken.push(res);
       }
+    }
+    for (const res of broken) {
+      this.removeConnection(res);
     }
 
     if (sent > 0) {
@@ -106,12 +110,16 @@ export class SSEManager {
   private ensureHeartbeat(): void {
     if (this.heartbeatInterval) return;
     this.heartbeatInterval = setInterval(() => {
+      const broken: ServerResponse[] = [];
       for (const res of this.connections) {
         try {
           res.write(':heartbeat\n\n');
         } catch {
-          this.removeConnection(res);
+          broken.push(res);
         }
+      }
+      for (const res of broken) {
+        this.removeConnection(res);
       }
     }, this.heartbeatMs);
   }

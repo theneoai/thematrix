@@ -148,10 +148,10 @@ export class AlertManager {
       }
     }
 
-    // Check if already firing for this rule
+    // Check if already active (firing or acknowledged) for this rule
     for (const alert of this.activeAlerts.values()) {
-      if (alert.ruleId === rule.id && alert.status === 'firing') {
-        return; // Already firing, don't duplicate
+      if (alert.ruleId === rule.id && alert.status !== 'resolved') {
+        return; // Already active, don't duplicate
       }
     }
 
@@ -175,6 +175,10 @@ export class AlertManager {
 
     this.activeAlerts.set(alert.id, alert);
     this.alertHistory.push(alert);
+    // Cap alert history to prevent unbounded growth
+    if (this.alertHistory.length > 10_000) {
+      this.alertHistory.splice(0, this.alertHistory.length - 10_000);
+    }
     this.cooldowns.set(rule.id, Date.now());
 
     this.logger.warn(`Alert fired: ${alert.title} [${alert.severity}] - ${alert.message}`);

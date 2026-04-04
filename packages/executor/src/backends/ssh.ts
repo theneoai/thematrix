@@ -105,7 +105,8 @@ export class SSHExecutionBackend implements ExecutionBackend {
       // 3. Try to read the remote PID
       try {
         const pidOutput = await this.sshExec(`cat "${remoteDir}/pid"`);
-        record.remotePid = parseInt(pidOutput.stdout.trim(), 10) || undefined;
+        const parsedPid = parseInt(pidOutput.stdout.trim(), 10);
+        record.remotePid = (Number.isInteger(parsedPid) && parsedPid > 0) ? parsedPid : undefined;
       } catch {
         // PID file may not exist if the command finished too quickly
       }

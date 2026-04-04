@@ -5,7 +5,7 @@
  * Supports: patchset-created, change-merged, comment-added
  */
 
-import { createHmac } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import type {
   ChannelAdapter,
   IncomingRequest,
@@ -62,9 +62,7 @@ export class GerritChannelAdapter implements ChannelAdapter {
     }
 
     const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
-    // Use timing-safe comparison
     try {
-      const { timingSafeEqual } = require('node:crypto');
       return timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(expected, 'hex'));
     } catch {
       return false;

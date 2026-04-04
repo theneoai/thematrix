@@ -1,541 +1,326 @@
-# TheMatrix - Multi-Agent Workflow Orchestration System
+# TheMatrix - Technical Architecture
 
-## Context
+## Overview
 
-TheMatrix is a greenfield multi-agent workflow orchestration system for the `theneoai` organization. The repository currently contains only a LICENSE (MIT) and README. The goal is to build a comprehensive system inspired by Claude Agent SDK that enables:
-- Defining custom AI agents with configurable personalities, skills, and tool permissions
-- Orchestrating multiple agents in workflows (DAG/state-machine) with shared memory
-- Scheduling, monitoring, and managing workflows via CLI and web dashboard
-- Integrating with MCP protocol, plugins, and external AI clients (opencode, claude, openclaw, copaw, qclaw)
+TheMatrix is a multi-agent workflow orchestration system designed for AI-native DevOps automation. It provides a complete platform for defining, scheduling, executing, and monitoring AI agent workflows across distributed infrastructure.
+
+The system is built as a TypeScript monorepo using pnpm workspaces and Turborepo, with a layered architecture that separates concerns across 13 packages and 2 applications.
 
 ---
 
-## Architecture Overview
+## System Architecture
 
 ```
-                    ┌─────────────┐
-                    │   CLI App   │
-                    └──────┬──────┘
-                           │
-              ┌────────────┼────────────┐
-              │            │            │
-        ┌─────┴─────┐ ┌───┴───┐ ┌─────┴─────┐
-        │ Dashboard  │ │  MCP  │ │  Plugins  │
-        │ (Next.js)  │ │Server │ │   Host    │
-        └─────┬──────┘ └───┬───┘ └─────┬─────┘
-              │            │            │
-        ┌─────┴────────────┴────────────┴─────┐
-        │         @thematrix/core              │
-        │  ┌──────────┐  ┌──────────────────┐  │
-        │  │ Workflow  │  │  Agent Runtime   │  │
-        │  │  Engine   │  │  (Lifecycle Mgr) │  │
-        │  └────┬─────┘  └───────┬──────────┘  │
-        │       │                │              │
-        │  ┌────┴────┐  ┌───────┴──────────┐   │
-        │  │EventBus │  │ Memory Manager   │   │
-        │  │& Store  │  │ (KV/Vector/Chat) │   │
-        │  └─────────┘  └─────────────────┘    │
-        │       │                               │
-        │  ┌────┴──────────┐ ┌──────────────┐  │
-        │  │Message Broker │ │ Skill Engine │  │
-        │  └───────────────┘ └──────────────┘  │
-        └──────────────────────────────────────┘
-              │            │            │
-        ┌─────┴──────┐ ┌──┴───┐ ┌─────┴──────┐
-        │  Adapters   │ │Config│ │   Types    │
-        │(LLM/Client) │ │(YAML)│ │(Interfaces)│
-        └────────────┘ └──────┘ └────────────┘
+                    ┌─────────────────────────────────────────────┐
+                    │               User Interfaces                │
+                    │  ┌────────────┐  ┌──────────┐  ┌─────────┐  │
+                    │  │  Dashboard  │  │   CLI    │  │   API   │  │
+                    │  │ (Next.js)  │  │(Commander)│  │ (REST)  │  │
+                    │  └─────┬──────┘  └────┬─────┘  └────┬────┘  │
+                    └────────┼──────────────┼─────────────┼───────┘
+                             │              │             │
+                    ┌────────┴──────────────┴─────────────┴───────┐
+                    │             Orchestration Layer               │
+                    │  ┌───────────┐ ┌──────────┐ ┌────────────┐  │
+                    │  │  Monitor   │ │ Gateway  │ │  Scheduler │  │
+                    │  │(REST+SSE) │ │(Webhooks)│ │(Cron+Event)│  │
+                    │  └─────┬─────┘ └────┬─────┘ └─────┬──────┘  │
+                    │        │            │              │          │
+                    │  ┌─────┴────────────┴──────────────┴──────┐  │
+                    │  │              Core Engine                │  │
+                    │  │  ┌──────────┐  ┌──────────────────┐    │  │
+                    │  │  │ Workflow  │  │  Agent Runtime   │    │  │
+                    │  │  │  Engine   │  │  (Lifecycle Mgr) │    │  │
+                    │  │  └────┬─────┘  └───────┬──────────┘    │  │
+                    │  │       │                │                │  │
+                    │  │  ┌────┴────┐  ┌───────┴──────────┐     │  │
+                    │  │  │EventBus │  │ Memory Manager   │     │  │
+                    │  │  │& Store  │  │ (KV/Vector/Chat) │     │  │
+                    │  │  └─────────┘  └──────────────────┘     │  │
+                    │  └────────────────────────────────────────┘  │
+                    └─────────────┬────────────────────────────────┘
+                                  │
+                    ┌─────────────┴────────────────────────────────┐
+                    │             Infrastructure Layer              │
+                    │  ┌──────────┐ ┌──────────┐ ┌─────────────┐  │
+                    │  │Providers │ │ Executor │ │   Cluster   │  │
+                    │  │(14 LLMs) │ │(4 Backs) │ │ (4 Strats)  │  │
+                    │  └──────────┘ └──────────┘ └─────────────┘  │
+                    └──────────────────────────────────────────────┘
+                                  │
+                    ┌─────────────┴────────────────────────────────┐
+                    │              Foundation Layer                 │
+                    │  ┌──────────┐ ┌──────────┐ ┌─────────────┐  │
+                    │  │  Types   │ │  Config  │ │    Utils    │  │
+                    │  │(Schemas) │ │(Zod+YAML)│ │(Log/ID/Retry│  │
+                    │  └──────────┘ └──────────┘ └─────────────┘  │
+                    └──────────────────────────────────────────────┘
 ```
 
 ---
 
 ## Tech Stack
 
-- **Language**: TypeScript (strict mode)
-- **Monorepo**: pnpm workspaces + Turborepo
-- **Build**: tsup (fast bundling)
-- **CLI**: Commander.js + Ink (React-based terminal UI)
-- **Storage**: In-memory (dev) + SQLite via better-sqlite3 (persistence)
-- **Config**: YAML (yaml package) + Zod validation
-- **Testing**: Vitest
-- **MCP**: @modelcontextprotocol/sdk
-- **IDs**: ulid
-- **LLM Adapters**: Anthropic, OpenCode, MiniMax, KimiCoding
+| Category | Technology |
+|----------|-----------|
+| Language | TypeScript (strict mode, ESM) |
+| Monorepo | pnpm workspaces + Turborepo |
+| Build | tsup (ESM + DTS output) |
+| Runtime | Node.js 22+ |
+| CLI | Commander.js + Ink (React terminal UI) |
+| Dashboard | Next.js 15 + React 19 + Tailwind CSS |
+| State Management | Zustand + TanStack Query |
+| Storage | In-memory (dev) + SQLite via better-sqlite3 |
+| Config | YAML + Zod validation |
+| Testing | Vitest |
+| IDs | ULID |
+| Metrics | Prometheus-compatible format |
+| Real-time | Server-Sent Events (SSE) |
 
 ---
 
-## Monorepo Package Structure
+## Package Structure
 
 ```
 thematrix/
-├── package.json                    # Root workspace
-├── pnpm-workspace.yaml
-├── turbo.json
-├── tsconfig.base.json
-│
 ├── packages/
-│   ├── types/                      # @thematrix/types - All interfaces & types
-│   ├── core/                       # @thematrix/core - Engine, runtime, memory, events
-│   ├── config/                     # @thematrix/config - YAML parsing & Zod validation
-│   ├── adapters/                   # @thematrix/adapters - LLM & client adapters
-│   ├── mcp/                        # @thematrix/mcp - MCP server/client
-│   ├── plugins/                    # @thematrix/plugins - Plugin host & loader
-│   └── utils/                      # @thematrix/utils - Logger, ID gen, retry
+│   ├── types/          @thematrix/types      Type definitions & interfaces
+│   ├── utils/          @thematrix/utils      Logger, ID gen, retry, errors
+│   ├── config/         @thematrix/config     YAML parsing + Zod schemas
+│   ├── adapters/       @thematrix/adapters   LLM adapter implementations
+│   ├── core/           @thematrix/core       Engine, runtime, memory, events
+│   ├── providers/      @thematrix/providers  Provider plugins, token pool, router
+│   ├── executor/       @thematrix/executor   Execution backends
+│   ├── gateway/        @thematrix/gateway    Webhook server + channel adapters
+│   ├── scheduler/      @thematrix/scheduler  Cron + event-driven triggers
+│   ├── monitor/        @thematrix/monitor    REST API + SSE + alerts
+│   ├── cluster/        @thematrix/cluster    Multi-node management
+│   ├── mcp/            @thematrix/mcp        MCP server/client
+│   └── plugins/        @thematrix/plugins    Plugin host & loader
 │
 ├── apps/
-│   ├── cli/                        # @thematrix/cli - CLI management tool
-│   └── dashboard/                  # @thematrix/dashboard - Web UI
+│   ├── cli/            @thematrix/cli        CLI management tool
+│   └── dashboard/      @thematrix/dashboard  Web UI (Next.js 15)
 │
-├── skills/                         # Built-in skill packages
-│   ├── web-search/
-│   ├── code-analysis/
-│   └── file-operations/
-│
-└── examples/                       # Example workflows & agents
-    ├── simple-pipeline/
-    ├── code-review/
-    └── multi-agent-chat/
+├── k8s/                Kubernetes manifests
+├── Dockerfile          Multi-stage build
+├── docker-compose.yml  Single-node deployment
+├── docker-compose.cluster.yml  Multi-node cluster
+└── matrix.config.yaml  Example configuration
+```
+
+### Dependency Graph
+
+```
+types ← utils ← config ← adapters ← core ← providers
+                                       ↑        ↑
+                                  executor   gateway
+                                       ↑        ↑
+                                   scheduler  monitor
+                                       ↑
+                                    cluster
+                                       ↑
+                                    cli/dashboard
 ```
 
 ---
 
-## Core Data Models (Key Interfaces)
+## Subsystem Details
 
-### Agent (`packages/types/src/agent.ts`)
+### 1. Provider System (@thematrix/providers)
 
+The provider system abstracts LLM access through a plugin architecture supporting 14 providers.
+
+**Components:**
+- **ProviderRegistry** -- Plugin registration and lifecycle management
+- **TokenPool** -- Budget allocation, rate limiting (RPM/TPM/concurrent), cost tracking
+- **ProviderRouter** -- Request routing with 4 strategies (priority, round-robin, least-cost, failover)
+- **SecretManager** -- Credential resolution from env vars, files, or vault with caching
+
+**Supported Providers:**
+OpenAI, Anthropic, Google Gemini, Azure OpenAI, AWS Bedrock, Mistral, Groq, Together, DeepSeek, OpenRouter, Ollama, OpenCode, KimiCode, MiniMax
+
+**Plugin Interface:**
 ```typescript
-export type AgentStatus = 'created' | 'initializing' | 'running' | 'paused' | 'stopping' | 'stopped' | 'error';
-
-export interface AgentDefinition {
-  id: string;
-  name: string;
-  version: string;
-  persona: AgentPersona;
-  model: ModelConfig;
-  skills: SkillRef[];
-  tools: ToolPermission[];
-  memory: AgentMemoryConfig;
-  maxConcurrency: number;
-  turnTimeoutMs: number;
-  metadata: Record<string, unknown>;
-}
-
-export interface AgentPersona {
-  systemPrompt: string;
-  personality: string;       // e.g. "meticulous and detail-oriented"
-  role: string;              // e.g. "researcher", "critic"
-  temperature?: number;
-  traits: Record<string, string>;
-}
-
-export interface ModelConfig {
-  provider: string;          // "anthropic" | "openai" | "ollama"
-  model: string;
-  apiKeyEnvVar?: string;
-  baseUrl?: string;
-  maxTokens?: number;
-}
-
-export interface AgentInstance {
-  instanceId: string;
-  definitionId: string;
-  workflowRunId: string;
-  status: AgentStatus;
-  metrics: AgentMetrics;
+interface ProviderPlugin {
+  name: ProviderName;
+  displayName: string;
+  models: ModelCatalogEntry[];
+  prepareRuntimeAuth(config: ProviderConfig): Promise<RuntimeAuth>;
+  createAdapter(auth: RuntimeAuth, model: string): Promise<LLMAdapter>;
+  healthCheck(config: ProviderConfig): Promise<boolean>;
 }
 ```
 
-### Workflow (`packages/types/src/workflow.ts`)
+### 2. Execution System (@thematrix/executor)
 
-```typescript
-export type WorkflowStatus = 'draft' | 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled' | 'timed_out';
-export type ExecutionMode = 'dag' | 'state-machine';
+Four execution backends implement a common `ExecutionBackend` interface:
 
-export interface WorkflowDefinition {
-  id: string;
-  name: string;
-  version: string;
-  mode: ExecutionMode;
-  agents: Record<string, AgentRef>;
-  dag?: DAGDefinition;              // nodes + edges
-  stateMachine?: StateMachineDefinition;
-  sharedMemory: WorkflowMemoryConfig;
-  schedule?: ScheduleConfig;        // cron, startAt, maxDurationMs
-  integrations?: IntegrationConfig[];
-  timeoutMs?: number;
-  inputSchema?: Record<string, unknown>;
-  outputSchema?: Record<string, unknown>;
-}
+| Backend | Transport | Use Case |
+|---------|-----------|----------|
+| Local | In-process AgentRuntime | Development, testing |
+| Docker | Docker Engine REST API | Isolated container execution |
+| SSH | SSH + remote shell commands | Remote server execution |
+| Kubernetes | K8s Jobs API | Production cluster execution |
 
-export interface DAGDefinition {
-  nodes: DAGNode[];                 // id, agentId, type, inputMapping, condition, retry
-  edges: DAGEdge[];                 // from, to, condition
-}
+The `ExecutorManager` routes tasks to the appropriate backend based on configuration.
 
-export interface StateMachineDefinition {
-  initialState: string;
-  states: Record<string, StateDefinition>;  // task/parallel/choice/wait/terminal
-}
+### 3. Gateway System (@thematrix/gateway)
 
-export interface ScheduleConfig {
-  cron?: string;
-  startAt?: string;                 // ISO 8601
-  maxDurationMs?: number;
-  timezone?: string;
-}
-```
+The gateway provides a Node.js HTTP server that receives webhooks from 8 platforms and normalizes them into `TriggerEvent` objects.
 
-### Memory (`packages/types/src/memory.ts`)
+**Channel Adapters:**
 
-```typescript
-export type MemoryScope = 'agent-local' | 'workflow-shared' | 'global';
+| Platform | Signature Method | Event Types |
+|----------|-----------------|-------------|
+| Gerrit | HMAC-SHA256 | patchset-created, change-merged, comment-added |
+| Jira | HMAC-SHA256 (x-hub-signature) | issue_created, issue_updated, comment_created |
+| GitLab | Token (X-Gitlab-Token) | push, merge_request, note, pipeline |
+| Feishu | HMAC-SHA256 (timestamp+nonce) | message, interactive |
+| WeChat | SHA1 (token+timestamp+nonce) | text, event |
+| DingTalk | HMAC-SHA256 (timestamp+secret) | text, interactive |
+| Slack | HMAC-SHA256 (v0 signing) | message, app_mention |
+| Custom | Configurable | Any |
 
-export interface IMemoryManager {
-  // KV store
-  get(scope: MemoryScope, ownerId: string, key: string): Promise<unknown | undefined>;
-  set(scope: MemoryScope, ownerId: string, key: string, value: unknown, ttlMs?: number): Promise<void>;
-  delete(scope: MemoryScope, ownerId: string, key: string): Promise<boolean>;
-  list(scope: MemoryScope, ownerId: string, prefix?: string): Promise<MemoryEntry[]>;
-  // Vector memory
-  embed(scope: MemoryScope, ownerId: string, content: string, metadata?: Record<string, unknown>): Promise<string>;
-  search(scope: MemoryScope, ownerId: string, query: string, topK?: number): Promise<VectorMemoryEntry[]>;
-  // Conversation history
-  appendTurn(agentInstanceId: string, turn: ConversationTurn): Promise<string>;
-  getHistory(agentInstanceId: string, limit?: number): Promise<ConversationTurn[]>;
-}
-```
+All signature verifications use `timingSafeEqual` to prevent timing attacks.
 
-### Events & Messages (`packages/types/src/event.ts`, `message.ts`)
+### 4. Scheduler System (@thematrix/scheduler)
 
-```typescript
-export interface DomainEvent<T = unknown> {
-  eventId: string;
-  type: string;                     // "agent.started", "workflow.node.completed"
-  source: { kind: 'agent' | 'workflow' | 'system'; id: string };
-  timestamp: Date;
-  payload: T;
-  correlationId: string;            // workflow run id
-}
+**CronScheduler:**
+- Custom 5-field cron parser (minute, hour, day-of-month, month, day-of-week)
+- Timezone support via `Intl.DateTimeFormat` (no external dependencies)
+- Range, step, and list expressions
 
-export interface IEventBus {
-  publish(event: DomainEvent): Promise<void>;
-  subscribe(pattern: string, handler: EventHandler): Unsubscribe;
-  replay(fromEventId?: string, filter?: EventFilter): AsyncIterable<DomainEvent>;
-}
+**TriggerMatcher:**
+- 7 condition operators: `equals`, `not_equals`, `contains`, `matches`, `in`, `gt`, `lt`
+- JSONPath field resolution for nested event data
+- Cooldown and maxConcurrent enforcement
 
-export interface AgentMessage {
-  messageId: string;
-  fromAgentId: string;
-  toAgentId: string | '*';          // '*' = broadcast
-  workflowRunId: string;
-  type: 'request' | 'response' | 'notification' | 'command';
-  content: MessageContent;          // text | structured | tool-result | handoff
-  priority: 'low' | 'normal' | 'high' | 'critical';
-}
+### 5. Monitoring System (@thematrix/monitor)
 
-export interface IMessageBroker {
-  send(message: AgentMessage): Promise<void>;
-  receive(agentId: string, workflowRunId: string): AsyncIterable<AgentMessage>;
-  request(message: AgentMessage, timeoutMs?: number): Promise<AgentMessage>;
-  subscribe(channel: string, handler: (msg: AgentMessage) => void): Unsubscribe;
-}
-```
+- **REST API** -- 16 routes covering workflows, agents, tokens, cluster, triggers, metrics, health, and alerts
+- **SSE Manager** -- Real-time event streaming to dashboard clients with type-based filtering
+- **AlertManager** -- Threshold-based rules with severity levels, duration tracking, and cooldown
+- **HealthAggregator** -- Collects health checks from all subsystems
 
-### Skill (`packages/types/src/skill.ts`)
+### 6. Cluster System (@thematrix/cluster)
 
-```typescript
-export interface SkillDefinition {
-  id: string;
-  name: string;
-  version: string;
-  description: string;
-  entryPoint: string;
-  tools: SkillToolDefinition[];
-  permissions: SkillPermission[];
-  configSchema?: Record<string, unknown>;
-}
+- **NodeRegistry** -- Node registration with heartbeat tracking
+- **WorkDistributor** -- Task distribution with 30s timeout on HTTP submissions
+- **ClusterHealthMonitor** -- Periodic health checks of all registered nodes
 
-export interface SkillModule {
-  initialize(context: SkillContext): Promise<void>;
-  dispose?(): Promise<void>;
-  handlers: Record<string, SkillToolHandler>;
-}
-```
+**Distribution Strategies:**
+
+| Strategy | Description |
+|----------|-------------|
+| round-robin | Cyclic distribution across healthy nodes |
+| least-loaded | Routes to node with lowest current load |
+| resource-aware | Considers CPU, memory, GPU availability |
+| label-match | Matches task labels against node capabilities |
 
 ---
 
-## Configuration File Format (YAML)
+## Event System
 
-### Agent Definition (`researcher.agent.yaml`)
+The event bus implements an event sourcing pattern with 30+ event types organized by subsystem:
+
+```
+WORKFLOW_*    -- Workflow lifecycle (started, completed, failed, cancelled)
+AGENT_*       -- Agent lifecycle (started, completed, error, message)
+NODE_*        -- DAG node execution (started, completed, failed, skipped)
+TRIGGER_*     -- Webhook triggers (received, matched, fired)
+TOKEN_*       -- Token budget (consumed, warning, exceeded)
+CLUSTER_*     -- Cluster management (registered, deregistered, offline)
+EXECUTION_*   -- Backend execution (started, completed, failed)
+ALERT_*       -- Alert lifecycle (fired, resolved, acknowledged)
+SCHEDULE_*    -- Cron scheduling (fired)
+```
+
+Events are stored in SQLite for replay and audit, and broadcast to SSE clients for real-time monitoring.
+
+---
+
+## Configuration
+
+All configuration is defined in `matrix.config.yaml` and validated with Zod schemas:
 
 ```yaml
-id: researcher-v1
-name: Research Agent
-version: "1.0.0"
+providers:
+  - name: openai
+    credentials: { type: env, ref: OPENAI_API_KEY }
+    models: [gpt-4o, gpt-4o-mini]
 
-persona:
-  systemPrompt: |
-    You are a meticulous research agent. Your job is to gather,
-    verify, and synthesize information from multiple sources.
-  personality: "meticulous, thorough, citation-focused"
-  role: researcher
-  temperature: 0.3
-  traits:
-    communication_style: "formal and precise"
-    expertise: "academic research, fact-checking"
+tokenPool:
+  globalBudget: { maxTokens: 10000000, maxCostUsd: 100, period: monthly }
+  perAgent: { maxTokens: 500000, maxCostUsd: 10 }
 
-model:
-  provider: anthropic
-  model: claude-sonnet-4-20250514
-  apiKeyEnvVar: ANTHROPIC_API_KEY
-  maxTokens: 4096
+execution:
+  backend: docker
+  parallelism: 4
 
-skills:
-  - skillId: web-search
-    config:
-      maxResults: 10
-  - skillId: file-operations
-    config:
-      allowedPaths: ["./data", "./output"]
+gateway:
+  port: 9090
+  channels:
+    - platform: gitlab
+      secret: { type: env, ref: GITLAB_WEBHOOK_TOKEN }
 
-tools:
-  - name: read_file
-    permission: allow
-  - name: write_file
-    permission: confirm
-  - name: execute_code
-    permission: deny
+monitor:
+  port: 8080
+  enableSSE: true
+  alerts:
+    - name: high-error-rate
+      metric: workflow.error_rate
+      condition: { operator: gt, threshold: 0.1, durationMs: 60000 }
+      severity: critical
 
-memory:
-  persistHistory: true
-  maxHistoryTurns: 50
-  scopes:
-    - scope: agent-local
-      access: read-write
-    - scope: workflow-shared
-      access: read-write
-    - scope: global
-      access: read
-
-maxConcurrency: 1
-turnTimeoutMs: 60000
-```
-
-### Workflow Definition (`code-review.workflow.yaml`)
-
-```yaml
-id: code-review-pipeline
-name: Automated Code Review
-version: "1.0.0"
-description: "Multi-agent pipeline for comprehensive code review"
-mode: dag
-
-agents:
-  analyzer:
-    ref: ./agents/analyzer.agent.yaml
-  reviewer:
-    ref: ./agents/reviewer.agent.yaml
-  summarizer:
-    ref: ./agents/summarizer.agent.yaml
-    overrides:
-      persona:
-        temperature: 0.2
-
-dag:
-  nodes:
-    - id: analyze
-      agentId: analyzer
-      type: task
-      inputMapping:
-        code: "$.input.pullRequestDiff"
-    - id: review-security
-      agentId: reviewer
-      type: task
-      inputMapping:
-        analysis: "$.nodes.analyze.output"
-        focus: "'security'"
-    - id: review-performance
-      agentId: reviewer
-      type: task
-      inputMapping:
-        analysis: "$.nodes.analyze.output"
-        focus: "'performance'"
-    - id: summarize
-      agentId: summarizer
-      type: task
-      inputMapping:
-        securityReview: "$.nodes.review-security.output"
-        performanceReview: "$.nodes.review-performance.output"
-
-  edges:
-    - from: analyze
-      to: review-security
-    - from: analyze
-      to: review-performance
-    - from: review-security
-      to: summarize
-    - from: review-performance
-      to: summarize
-
-sharedMemory:
-  kvStore: in-memory       # or "sqlite" for persistence
-  persistent: false
-
-schedule:
-  maxDurationMs: 300000    # 5 minutes max
-
-integrations:
-  - type: webhook-in
-    id: github-pr
-    config:
-      path: /hooks/github-pr
-      method: POST
-  - type: webhook-out
-    id: notify-slack
-    config:
-      url: "${SLACK_WEBHOOK_URL}"
-
-inputSchema:
-  type: object
-  properties:
-    pullRequestDiff:
-      type: string
-  required: [pullRequestDiff]
+cluster:
+  strategy: least-loaded
+  heartbeatIntervalMs: 30000
 ```
 
 ---
 
-## CLI Command Structure
-
-```
-matrix init                              # Initialize a new project
-matrix init --template <name>            # Init from template
-
-matrix agent create <name>               # Create agent definition (interactive)
-matrix agent list                        # List all agent definitions
-matrix agent show <id>                   # Show agent details
-matrix agent validate <file>             # Validate agent YAML
-matrix agent test <id>                   # Run agent in test mode
-
-matrix workflow create <name>            # Create workflow definition
-matrix workflow list                     # List all workflows
-matrix workflow show <id>                # Show workflow details
-matrix workflow validate <file>          # Validate workflow YAML
-matrix workflow run <id> [--input file]  # Execute a workflow
-matrix workflow status <runId>           # Check run status
-matrix workflow pause <runId>            # Pause a running workflow
-matrix workflow resume <runId>           # Resume a paused workflow
-matrix workflow cancel <runId>           # Cancel a workflow
-matrix workflow logs <runId>             # Stream workflow event log
-matrix workflow history                  # List past workflow runs
-
-matrix skill list                        # List available skills
-matrix skill install <name>             # Install a skill
-matrix skill create <name>              # Scaffold a new skill
-
-matrix dev                               # Start dashboard + watch mode (localhost:3000)
-matrix dev --port <port>                 # Custom port
-
-matrix config show                       # Show current config
-matrix config set <key> <value>          # Set config value
-```
-
----
-
-## Client & Protocol Adapters
-
-### LLM Adapter Pattern (`packages/adapters/src/llm/`)
-
-```typescript
-export interface LLMAdapter {
-  readonly provider: string;
-  chat(request: ChatRequest): Promise<ChatResponse>;
-  chatStream(request: ChatRequest): AsyncIterable<ChatStreamChunk>;
-  countTokens(text: string): Promise<number>;
-}
-
-// Implementations: AnthropicAdapter, OpenCodeAdapter, MiniMaxAdapter, KimiCodingAdapter
-```
-
-### External Client Adapter (`packages/adapters/src/clients/`)
-
-```typescript
-export interface ClientAdapter {
-  readonly clientType: string;
-  connect(config: ClientConfig): Promise<void>;
-  disconnect(): Promise<void>;
-  sendTask(task: AgentTask): Promise<TaskResult>;
-  onMessage(handler: (msg: ClientMessage) => void): Unsubscribe;
-}
-
-// Implementations: OpenCodeAdapter, ClaudeAdapter, OpenClawAdapter, CoPawAdapter, QClawAdapter
-```
-
-### MCP Integration (`packages/mcp/`)
-
-- **MCP Server**: Exposes TheMatrix workflows as MCP tools (run workflow, query status, read memory)
-- **MCP Client**: Allows agents to connect to external MCP servers for additional tools
-
----
-
-## Implementation Phases
-
-### Phase 1: Foundation (packages/types + utils + config + core skeleton)
-**Files to create:**
-- `package.json`, `pnpm-workspace.yaml`, `turbo.json`, `tsconfig.base.json`
-- `packages/types/src/` - All type definitions (agent, workflow, skill, memory, event, message)
-- `packages/utils/src/` - Logger, ID generation, retry utils
-- `packages/config/src/` - YAML parser, Zod schemas, config loader
-- `packages/core/src/event/` - EventBus, EventStore (in-memory)
-
-### Phase 2: Agent Runtime
-**Files to create:**
-- `packages/core/src/agent/` - AgentRuntime, AgentRegistry, AgentLifecycle
-- `packages/core/src/memory/` - MemoryManager, KVStore, ConversationHistory
-- `packages/core/src/skill/` - SkillLoader, SkillRegistry
-- `packages/core/src/tools/` - ToolRegistry, ToolPermission
-- `packages/adapters/src/llm/` - Base adapter + Anthropic, OpenCode, MiniMax, KimiCoding implementations
-
-### Phase 3: Workflow Engine
-**Files to create:**
-- `packages/core/src/workflow/` - WorkflowEngine, DAGExecutor, StateMachineExecutor, WorkflowScheduler
-- `packages/core/src/messaging/` - MessageBroker, MessageRouter
-- `packages/core/src/memory/vector-memory.ts` - Vector memory support
-
-### Phase 4: CLI
-**Files to create:**
-- `apps/cli/src/` - All CLI commands (init, agent, workflow, skill, dev, config)
-- `apps/cli/src/ui/` - Terminal UI components (spinner, table, prompts)
-
-### Phase 5 & 6 (Deferred - not in this session)
-- Dashboard (Next.js web UI)
-- MCP server/client, Plugin host
-- External client adapters (openclaw, copaw, qclaw)
-- Built-in skill packages
-
----
-
-## Key Design Patterns
+## Design Patterns
 
 | Pattern | Usage |
 |---------|-------|
-| **Event Sourcing** | All state changes emitted as events, stored for replay/audit |
-| **Adapter** | LLM providers, external clients, storage backends |
-| **Registry** | Central registries for agents, workflows, skills, tools |
-| **Mediator** | EventBus + MessageBroker decouple agent communication |
-| **Strategy** | DAGExecutor vs StateMachineExecutor selected by workflow mode |
-| **Observer** | Dashboard subscribes to real-time events via WebSocket |
-| **Plugin** | PluginHost loads/sandboxes extensions at runtime |
-| **Scoped DI** | Each workflow run gets isolated memory/messaging instances |
+| Event Sourcing | All state changes emitted as DomainEvents, stored for replay |
+| Plugin/Adapter | Provider plugins, channel adapters, execution backends |
+| Registry | Central registries for providers, agents, workflows, nodes |
+| Strategy | Routing strategies, distribution strategies, execution modes |
+| Observer | SSE streaming, event bus subscriptions |
+| Factory | `createOpenAICompatiblePlugin` for provider creation |
+| Mediator | EventBus + SchedulerManager decouple subsystem communication |
 
 ---
 
-## Verification Plan
+## Security Measures
 
-1. **Unit tests**: Each package has its own test suite (`vitest`)
-   - `pnpm test` at root runs all tests via turborepo
-2. **Integration test**: `examples/simple-pipeline/` workflow end-to-end
-   - `matrix workflow run simple-pipeline --input examples/simple-pipeline/input.json`
-3. **CLI smoke test**: `matrix init`, `matrix agent list`, `matrix workflow validate`
-4. **Dashboard**: `matrix dev` starts localhost:3000, verify workflow graph renders
-5. **Build**: `pnpm build` succeeds for all packages
+- **Signature Verification** -- All webhook adapters use HMAC with `timingSafeEqual`
+- **Secret Management** -- Credentials resolved via env vars, files, or vault (never stored in config)
+- **Input Sanitization** -- SSH commands sanitized, prototype pollution guards on JSON paths
+- **Rate Limiting** -- Per-provider RPM/TPM/concurrent limits enforced by TokenPool
+- **Body Size Limits** -- Gateway enforces 10MB max request body
+- **ReDoS Protection** -- Trigger regex matching limited to 10K character inputs
+- **Timeout Guards** -- All external HTTP calls have abort timeouts
+
+---
+
+## Deployment Options
+
+1. **Local Development** -- `pnpm dev` starts all packages in watch mode
+2. **Docker Single Node** -- `docker-compose up` runs matrix-server with optional Ollama
+3. **Docker Cluster** -- `docker-compose.cluster.yml` runs control + worker nodes
+4. **Kubernetes** -- Full manifests in `k8s/` with RBAC, ConfigMap, PVC, Services
+
+---
+
+## Build & Test
+
+```bash
+pnpm install          # Install all dependencies
+pnpm build            # Build all packages (turborepo, dependency-ordered)
+pnpm test             # Run all tests (vitest)
+pnpm typecheck        # TypeScript type checking
+pnpm lint             # ESLint
+```

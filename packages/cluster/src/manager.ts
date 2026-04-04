@@ -31,6 +31,7 @@ export class ClusterManager implements IClusterManager {
   private config: DistributionConfig;
   private logger: Logger;
   private completedTasks = 0;
+  private failedTasks = 0;
   private completedTasksLastHour = 0;
   private completedTasksResetTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -76,6 +77,9 @@ export class ClusterManager implements IClusterManager {
     const result = await this.distributor.distribute(task);
     this.completedTasks++;
     this.completedTasksLastHour++;
+    if (result.result?.status === 'failed') {
+      this.failedTasks = (this.failedTasks ?? 0) + 1;
+    }
     return result;
   }
 

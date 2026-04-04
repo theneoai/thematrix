@@ -5,7 +5,7 @@
  * Supports: jira:issue_created, jira:issue_updated, comment_created
  */
 
-import { createHmac } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import type {
   ChannelAdapter,
   IncomingRequest,
@@ -64,7 +64,11 @@ export class JiraChannelAdapter implements ChannelAdapter {
     }
 
     const expected = 'sha256=' + createHmac('sha256', secret).update(rawBody).digest('hex');
-    return signature === expected;
+    try {
+      return timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+    } catch {
+      return false;
+    }
   }
 
   async sendNotification(target: NotificationTarget, message: NotificationMessage): Promise<void> {

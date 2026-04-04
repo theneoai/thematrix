@@ -37,7 +37,13 @@ export class EventBus implements IEventBus {
   subscribe(pattern: string, handler: EventHandler): Unsubscribe {
     const wrappedHandler = (event: DomainEvent) => {
       try {
-        handler(event);
+        const result = handler(event);
+        // Catch rejected promises from async handlers
+        if (result && typeof (result as Promise<void>).catch === 'function') {
+          (result as Promise<void>).catch((error) => {
+            logger.error(`Async error in event handler for ${pattern}:`, error);
+          });
+        }
       } catch (error) {
         logger.error(`Error in event handler for ${pattern}:`, error);
       }
