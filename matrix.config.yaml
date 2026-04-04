@@ -1,0 +1,187 @@
+# TheMatrix Multi-Agent Cluster System Configuration
+# ================================================
+
+# LLM Provider 配置与路由
+providers:
+  providers:
+    - provider: openai
+      apiKey: ${OPENAI_API_KEY}
+      models: [gpt-4o, gpt-4o-mini]
+      rateLimit:
+        rpm: 500
+        tpm: 200000
+    - provider: anthropic
+      apiKey: ${ANTHROPIC_API_KEY}
+      models: [claude-sonnet-4-20250514, claude-haiku-4-5-20251001]
+      rateLimit:
+        rpm: 300
+        tpm: 150000
+    - provider: deepseek
+      apiKey: ${DEEPSEEK_API_KEY}
+      baseUrl: https://api.deepseek.com
+      models: [deepseek-chat, deepseek-reasoner]
+    - provider: moonshot
+      apiKey: ${MOONSHOT_API_KEY}
+      models: [moonshot-v1-32k]
+    - provider: qwen
+      apiKey: ${QWEN_API_KEY}
+      baseUrl: https://dashscope.aliyuncs.com/compatible-mode
+      models: [qwen-max, qwen-plus]
+    - provider: ollama
+      baseUrl: http://localhost:11434
+      models: [llama3, codellama, qwen2.5-coder]
+  failover: true
+  strategy: priority
+
+# Token 资源池配置
+tokenPool:
+  defaultBudget:
+    maxTokens: 1000000
+    period: daily
+    alertThreshold: 0.8
+  workflowBudgets:
+    code-review-pipeline:
+      maxTokens: 500000
+      maxCostUsd: 5.00
+      period: per-run
+    bug-analysis-pipeline:
+      maxTokens: 200000
+      period: per-run
+
+# 执行后端配置
+execution:
+  backend: local
+  parallelism: 4
+
+# Gateway 配置 (Webhook 接入)
+gateway:
+  port: 3002
+  basePath: /hooks
+  channels:
+    - platform: gerrit
+      enabled: true
+      secret: ${GERRIT_WEBHOOK_SECRET}
+    - platform: jira
+      enabled: true
+      secret: ${JIRA_WEBHOOK_SECRET}
+    - platform: gitlab
+      enabled: true
+      secret: ${GITLAB_WEBHOOK_SECRET}
+    - platform: feishu
+      enabled: true
+      config:
+        appId: ${FEISHU_APP_ID}
+        appSecret: ${FEISHU_APP_SECRET}
+        verificationToken: ${FEISHU_VERIFICATION_TOKEN}
+    - platform: wechat
+      enabled: true
+      secret: ${WECHAT_TOKEN}
+      config:
+        corpId: ${WECHAT_CORP_ID}
+        encodingAESKey: ${WECHAT_ENCODING_AES_KEY}
+    - platform: custom
+      enabled: true
+      path: /custom-im
+
+# Monitor 配置
+monitor:
+  port: 3001
+  enableAlerts: true
+  alertRules:
+    - id: high-error-rate
+      name: High Agent Error Rate
+      metric: agent.error_rate
+      condition:
+        operator: gt
+        threshold: 0.05
+        durationMs: 300000
+      severity: critical
+      enabled: true
+    - id: token-budget-warning
+      name: Token Budget Warning
+      metric: token.budget_usage
+      condition:
+        operator: gt
+        threshold: 0.8
+      severity: warning
+      enabled: true
+
+# 触发规则
+triggers:
+  - id: gerrit-code-review
+    name: Auto Code Review on Gerrit Change
+    channel: gerrit
+    eventType: patchset-created
+    conditions:
+      - field: "$.change.project"
+        operator: matches
+        value: "myorg/*"
+    workflowId: code-review-pipeline
+    inputMapping:
+      pullRequestDiff: "$.patchSet.diff"
+      changeId: "$.change.id"
+      project: "$.change.project"
+    enabled: true
+    cooldownMs: 10000
+
+  - id: jira-bug-analysis
+    name: Auto Bug Analysis on Jira Issue
+    channel: jira
+    eventType: issue_created
+    conditions:
+      - field: "$.issue.fields.issuetype.name"
+        operator: equals
+        value: "Bug"
+    workflowId: bug-analysis-pipeline
+    inputMapping:
+      issueKey: "$.issue.key"
+      summary: "$.issue.fields.summary"
+      description: "$.issue.fields.description"
+    enabled: true
+
+  - id: gitlab-mr-review
+    name: Auto MR Review on GitLab
+    channel: gitlab
+    eventType: merge_request
+    conditions:
+      - field: "$.object_attributes.action"
+        operator: in
+        value: ["open", "update"]
+    workflowId: code-review-pipeline
+    inputMapping:
+      pullRequestDiff: "$.object_attributes.description"
+      title: "$.object_attributes.title"
+    enabled: true
+
+  - id: feishu-command
+    name: Feishu Bot Command Trigger
+    channel: feishu
+    eventType: im.message.receive_v1
+    conditions:
+      - field: "$.event.message.content"
+        operator: contains
+        value: "/review"
+    workflowId: code-review-pipeline
+    inputMapping:
+      command: "$.event.message.content"
+      chatId: "$.event.message.chat_id"
+    enabled: true
+
+# 定时调度
+schedules:
+  - id: nightly-quality-scan
+    name: Nightly Code Quality Scan
+    cron: "0 2 * * *"
+    timezone: Asia/Shanghai
+    workflowId: code-quality-scan
+    input:
+      repo: "https://github.com/org/repo"
+      branch: main
+    enabled: true
+
+  - id: weekly-security-audit
+    name: Weekly Security Audit
+    cron: "0 10 * * 1"
+    timezone: Asia/Shanghai
+    workflowId: security-audit-pipeline
+    enabled: true

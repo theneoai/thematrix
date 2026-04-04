@@ -1,0 +1,48 @@
+# Template for agent execution Jobs
+# This is NOT applied directly - it's used as a template by the K8s executor backend
+# The executor fills in the placeholders at runtime
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: matrix-agent-${TASK_ID}
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: thematrix
+    app.kubernetes.io/component: agent
+    thematrix/workflow-run-id: "${WORKFLOW_RUN_ID}"
+    thematrix/agent-id: "${AGENT_ID}"
+    thematrix/task-id: "${TASK_ID}"
+spec:
+  ttlSecondsAfterFinished: 3600
+  backoffLimit: 0
+  activeDeadlineSeconds: ${TIMEOUT_SECONDS}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: thematrix
+        app.kubernetes.io/component: agent
+        thematrix/task-id: "${TASK_ID}"
+    spec:
+      restartPolicy: Never
+      serviceAccountName: thematrix
+      containers:
+        - name: agent
+          image: ${IMAGE}
+          env:
+            - name: MATRIX_TASK_ID
+              value: "${TASK_ID}"
+            - name: MATRIX_WORKFLOW_RUN_ID
+              value: "${WORKFLOW_RUN_ID}"
+            - name: MATRIX_AGENT_CONFIG
+              value: "${AGENT_CONFIG_JSON}"
+            - name: MATRIX_TASK_INPUT
+              value: "${TASK_INPUT_JSON}"
+            - name: MATRIX_CALLBACK_URL
+              value: "${CALLBACK_URL}"
+          resources:
+            requests:
+              cpu: ${CPU_REQUEST}
+              memory: ${MEMORY_REQUEST}
+            limits:
+              cpu: ${CPU_LIMIT}
+              memory: ${MEMORY_LIMIT}

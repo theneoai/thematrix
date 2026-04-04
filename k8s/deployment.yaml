@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: thematrix-server
+  namespace: thematrix
+  labels:
+    app.kubernetes.io/name: thematrix
+    app.kubernetes.io/component: server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: thematrix
+      app.kubernetes.io/component: server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: thematrix
+        app.kubernetes.io/component: server
+    spec:
+      serviceAccountName: thematrix
+      containers:
+        - name: server
+          image: thematrix/server:latest
+          ports:
+            - name: monitor
+              containerPort: 3001
+            - name: gateway
+              containerPort: 3002
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: MATRIX_DATA_DIR
+              value: /data
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: thematrix-secrets
+                  key: openai-api-key
+                  optional: true
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: thematrix-secrets
+                  key: anthropic-api-key
+                  optional: true
+          volumeMounts:
+            - name: config
+              mountPath: /app/matrix.config.yaml
+              subPath: matrix.config.yaml
+              readOnly: true
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: monitor
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: monitor
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: thematrix-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: thematrix-data

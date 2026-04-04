@@ -1,0 +1,43 @@
+# TheMatrix Multi-Agent Cluster System - Local Development
+version: "3.8"
+
+services:
+  matrix-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"  # Monitor API + SSE
+      - "3002:3002"  # Gateway (webhooks)
+    volumes:
+      - matrix-data:/data
+      - ./matrix.config.yaml:/app/matrix.config.yaml:ro
+    environment:
+      - NODE_ENV=production
+      - MATRIX_DATA_DIR=/data
+      # LLM Provider API Keys (override in .env file)
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY:-}
+      - QWEN_API_KEY=${QWEN_API_KEY:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Optional: Ollama for local model inference
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    profiles:
+      - local-llm
+
+volumes:
+  matrix-data:
+  ollama-models:

@@ -1,0 +1,63 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: thematrix-config
+  namespace: thematrix
+data:
+  matrix.config.yaml: |
+    providers:
+      providers:
+        - provider: openai
+          apiKey:
+            type: env
+            ref: OPENAI_API_KEY
+          models: [gpt-4o, gpt-4o-mini]
+          rateLimit:
+            rpm: 500
+            tpm: 200000
+        - provider: anthropic
+          apiKey:
+            type: env
+            ref: ANTHROPIC_API_KEY
+          models: [claude-sonnet-4-20250514]
+      failover: true
+      strategy: priority
+
+    tokenPool:
+      defaultBudget:
+        maxTokens: 1000000
+        period: daily
+        alertThreshold: 0.8
+
+    execution:
+      backend: kubernetes
+      config:
+        namespace: thematrix-agents
+        image: thematrix/agent-runner:latest
+      parallelism: 10
+
+    gateway:
+      port: 3002
+      basePath: /hooks
+      channels:
+        - platform: gerrit
+          enabled: true
+        - platform: jira
+          enabled: true
+        - platform: gitlab
+          enabled: true
+        - platform: feishu
+          enabled: true
+        - platform: custom
+          enabled: true
+
+    monitor:
+      port: 3001
+      enableAlerts: true
+
+    cluster:
+      enabled: true
+      distribution:
+        strategy: least-loaded
+        heartbeatTimeoutMs: 30000
+        autoFailover: true

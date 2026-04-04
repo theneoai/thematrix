@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: thematrix
+  namespace: thematrix
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: thematrix-agent-executor
+  namespace: thematrix
+rules:
+  # Allow creating/managing Jobs for agent execution
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  # Allow reading pod logs for agent output
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+  # Allow creating ConfigMaps for agent task config
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "get", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: thematrix-agent-executor
+  namespace: thematrix
+subjects:
+  - kind: ServiceAccount
+    name: thematrix
+    namespace: thematrix
+roleRef:
+  kind: Role
+  name: thematrix-agent-executor
+  apiGroup: rbac.authorization.k8s.io
