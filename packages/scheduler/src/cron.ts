@@ -87,7 +87,7 @@ export class CronScheduler {
     if (!this.running || !job.schedule.enabled) return;
 
     const now = new Date();
-    const nextRun = this.getNextRunTime(job.parsed, now);
+    const nextRun = this.getNextRunTime(job.parsed, now, job.schedule.timezone);
     const delay = nextRun.getTime() - now.getTime();
 
     if (delay < 0) {
@@ -184,10 +184,50 @@ export class CronScheduler {
   }
 
   /**
+   * Convert a UTC Date to the individual date/time components in a given timezone.
+   * Uses Intl.DateTimeFormat to resolve the wall-clock time in the target timezone.
+   */
+  private getPartsInTimezone(date: Date, timezone: string): {
+    year: number; month: number; day: number; hour: number; minute: number; weekday: number;
+  } {
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      weekday: 'short',
+      hour12: false,
+    });
+
+    const parts = fmt.formatToParts(date);
+    const get = (type: Intl.DateTimeFormatPartTypes): string =>
+      parts.find(p => p.type === type)?.value ?? '0';
+
+    const weekdayStr = get('weekday');
+    const weekdayMap: Record<string, number> = {
+      Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
+    };
+
+    return {
+      year: parseInt(get('year'), 10),
+      month: parseInt(get('month'), 10),
+      day: parseInt(get('day'), 10),
+      hour: parseInt(get('hour'), 10),
+      minute: parseInt(get('minute'), 10),
+      weekday: weekdayMap[weekdayStr] ?? 0,
+    };
+  }
+
+  /**
    * Calculate the next run time from `now` that matches the parsed cron expression.
    * Scans forward minute by minute (up to ~2 years) to find a match.
+   *
+   * If a timezone is provided, the cron fields are evaluated against the wall-clock
+   * time in that timezone, but the returned Date is in UTC.
    */
-  getNextRunTime(parsed: ParsedCron, now: Date): Date {
+  getNextRunTime(parsed: ParsedCron, now: Date, timezone?: string): Date {
     const candidate = new Date(now);
     // Start from the next minute
     candidate.setSeconds(0, 0);
@@ -197,11 +237,26 @@ export class CronScheduler {
     const maxIterations = 366 * 24 * 60;
 
     for (let i = 0; i < maxIterations; i++) {
-      const month = candidate.getMonth() + 1; // 1-12
-      const dayOfMonth = candidate.getDate();
-      const dayOfWeek = candidate.getDay(); // 0=Sun
-      const hour = candidate.getHours();
-      const minute = candidate.getMinutes();
+      let month: number;
+      let dayOfMonth: number;
+      let dayOfWeek: number;
+      let hour: number;
+      let minute: number;
+
+      if (timezone) {
+        const parts = this.getPartsInTimezone(candidate, timezone);
+        month = parts.month;
+        dayOfMonth = parts.day;
+        dayOfWeek = parts.weekday;
+        hour = parts.hour;
+        minute = parts.minute;
+      } else {
+        month = candidate.getMonth() + 1; // 1-12
+        dayOfMonth = candidate.getDate();
+        dayOfWeek = candidate.getDay(); // 0=Sun
+        hour = candidate.getHours();
+        minute = candidate.getMinutes();
+      }
 
       if (
         parsed.month.values.includes(month) &&

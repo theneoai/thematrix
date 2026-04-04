@@ -6,6 +6,9 @@
 
 import type { ProviderPlugin, ModelInfo } from '@thematrix/types';
 import { createOpenAICompatiblePlugin } from './base.js';
+import { anthropicPlugin } from './anthropic.js';
+import { opencodePlugin } from './opencode.js';
+import { kimicodePlugin } from './kimi.js';
 
 // ============================================================
 // OpenAI
@@ -182,8 +185,13 @@ export const huggingfacePlugin = createOpenAICompatiblePlugin({
 // 所有内置 Provider 列表
 // ============================================================
 
+export { anthropicPlugin } from './anthropic.js';
+export { opencodePlugin } from './opencode.js';
+export { kimicodePlugin } from './kimi.js';
+
 export const allProviderPlugins: ProviderPlugin[] = [
   openaiPlugin,
+  anthropicPlugin,
   azureOpenaiPlugin,
   googleGeminiPlugin,
   deepseekPlugin,
@@ -194,4 +202,6 @@ export const allProviderPlugins: ProviderPlugin[] = [
   minimaxPlugin,
   qwenPlugin,
   huggingfacePlugin,
+  opencodePlugin,
+  kimicodePlugin,
 ];

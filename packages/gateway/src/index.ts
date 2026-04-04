@@ -15,6 +15,8 @@ export { GitLabChannelAdapter } from './channels/gitlab.js';
 export { FeishuChannelAdapter } from './channels/feishu.js';
 export { WeChatChannelAdapter } from './channels/wechat.js';
 export { CustomChannelAdapter, type CustomAdapterConfig } from './channels/custom.js';
+export { DingTalkChannelAdapter } from './channels/dingtalk.js';
+export { SlackChannelAdapter } from './channels/slack.js';
 
 // Normalizer utilities
 export { createTriggerEvent, resolvePath } from './normalizer.js';

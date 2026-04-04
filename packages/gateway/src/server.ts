@@ -21,6 +21,8 @@ import { GitLabChannelAdapter } from './channels/gitlab.js';
 import { FeishuChannelAdapter } from './channels/feishu.js';
 import { WeChatChannelAdapter } from './channels/wechat.js';
 import { CustomChannelAdapter } from './channels/custom.js';
+import { DingTalkChannelAdapter } from './channels/dingtalk.js';
+import { SlackChannelAdapter } from './channels/slack.js';
 
 export type TriggerCallback = (event: TriggerEvent) => void | Promise<void>;
 
@@ -115,6 +117,10 @@ export class GatewayServer {
         return new WeChatChannelAdapter(config.config);
       case 'custom':
         return new CustomChannelAdapter(config.config);
+      case 'dingtalk':
+        return new DingTalkChannelAdapter(config.config);
+      case 'slack':
+        return new SlackChannelAdapter(config.config);
       default:
         this.logger.warn(`Unknown platform: ${config.platform}`);
         return null;

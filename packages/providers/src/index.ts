@@ -13,6 +13,7 @@ export { SecretManager } from './secret.js';
 export { OpenAICompatibleAdapter, createOpenAICompatiblePlugin } from './providers/base.js';
 export {
   openaiPlugin,
+  anthropicPlugin,
   azureOpenaiPlugin,
   googleGeminiPlugin,
   deepseekPlugin,
@@ -23,6 +24,8 @@ export {
   minimaxPlugin,
   qwenPlugin,
   huggingfacePlugin,
+  opencodePlugin,
+  kimicodePlugin,
   allProviderPlugins,
 } from './providers/all.js';
 
