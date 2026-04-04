@@ -8,15 +8,19 @@ import type {
   DAGNode,
   IEventBus,
   IMemoryManager,
+  IMessageBroker,
   LLMAdapter,
   AgentDefinition,
   DomainEvent,
+  IApprovalManager,
 } from '@thematrix/types';
 import { EventTypes } from '@thematrix/types';
 import { Logger, generateWorkflowRunId, sleep } from '@thematrix/utils';
 import { generateId } from '@thematrix/utils';
 import { AgentRuntime } from '../agent/runtime.js';
 import { AgentRegistry } from '../agent/registry.js';
+import { DynamicWorkflowExecutor } from './dynamic.js';
+import { ApprovalManager } from './approval.js';
 import { WorkflowError, ResourceNotFoundError, classifyError } from '../error/index.js';
 import { metrics, Metrics } from '../metrics/index.js';
 
@@ -29,6 +33,10 @@ export interface WorkflowEngineOptions {
   llmAdapterFactory: (config: { provider: string; model: string }) => LLMAdapter;
   agentIdMap?: Map<string, string>;
   /**
+   * Message broker for inter-agent communication (required for dynamic mode)
+   */
+  messageBroker?: IMessageBroker;
+  /**
    * 全局超时时间（毫秒）
    */
   globalTimeoutMs?: number;
@@ -36,6 +44,10 @@ export interface WorkflowEngineOptions {
    * 最大并发工作流数
    */
   maxConcurrentWorkflows?: number;
+  /**
+   * Approval manager for human-in-the-loop approval gates
+   */
+  approvalManager?: IApprovalManager;
 }
 
 interface WorkflowStats {
@@ -56,6 +68,8 @@ export class WorkflowEngine {
   private agentRegistry: AgentRegistry;
   private llmAdapterFactory: (config: { provider: string; model: string }) => LLMAdapter;
   private agentIdMap: Map<string, string>;
+  private messageBroker?: IMessageBroker;
+  private approvalManager?: IApprovalManager;
   private runs = new Map<string, WorkflowRun>();
   private runStats = new Map<string, WorkflowStats>();
   private activeAgents = new Map<string, Map<string, AgentRuntime>>();
@@ -70,6 +84,8 @@ export class WorkflowEngine {
     this.agentRegistry = options.agentRegistry;
     this.llmAdapterFactory = options.llmAdapterFactory;
     this.agentIdMap = options.agentIdMap ?? new Map();
+    this.messageBroker = options.messageBroker;
+    this.approvalManager = options.approvalManager;
     this.globalTimeoutMs = options.globalTimeoutMs ?? 300000; // 5分钟默认
     this.maxConcurrentWorkflows = options.maxConcurrentWorkflows ?? 10;
   }
@@ -132,9 +148,14 @@ export class WorkflowEngine {
     });
 
     // 执行工作流
-    const executionPromise = definition.mode === 'dag'
-      ? this.executeDAG(definition, run)
-      : this.executeStateMachine(definition, run);
+    let executionPromise: Promise<void>;
+    if (definition.mode === 'dag') {
+      executionPromise = this.executeDAG(definition, run);
+    } else if (definition.mode === 'dynamic') {
+      executionPromise = this.executeDynamic(definition, run);
+    } else {
+      executionPromise = this.executeStateMachine(definition, run);
+    }
 
     // 竞争执行和超时，完成后清除计时器
     // void is intentional: workflow runs asynchronously; caller polls via getRun()
@@ -300,6 +321,11 @@ export class WorkflowEngine {
     node: DAGNode,
     run: WorkflowRun
   ): Promise<unknown> {
+    // Handle approval nodes — no retry logic needed
+    if (node.type === 'approval') {
+      return this.executeApprovalNode(definition, node, run);
+    }
+
     const maxRetries = node.retry?.maxRetries ?? 2;
     const retryDelayMs = node.retry?.retryDelayMs ?? 1000;
     
@@ -455,6 +481,29 @@ export class WorkflowEngine {
     }
   }
 
+  private async executeDynamic(
+    definition: WorkflowDefinition,
+    run: WorkflowRun
+  ): Promise<void> {
+    if (!this.messageBroker) {
+      throw new WorkflowError(
+        'MessageBroker is required for dynamic execution mode. Provide messageBroker in WorkflowEngineOptions.',
+        definition.id,
+        run.runId,
+      );
+    }
+
+    const executor = new DynamicWorkflowExecutor({
+      eventBus: this.eventBus,
+      memory: this.memory,
+      agentRegistry: this.agentRegistry,
+      llmAdapterFactory: this.llmAdapterFactory,
+      messageBroker: this.messageBroker,
+    });
+
+    await executor.execute(definition, run);
+  }
+
   private async executeNode(
     definition: WorkflowDefinition,
     node: DAGNode,
@@ -475,6 +524,59 @@ export class WorkflowEngine {
     } finally {
       await runtime.stop();
     }
+  }
+
+  private async executeApprovalNode(
+    definition: WorkflowDefinition,
+    node: DAGNode,
+    run: WorkflowRun
+  ): Promise<unknown> {
+    if (!this.approvalManager) {
+      throw new WorkflowError(
+        'ApprovalManager is required for approval nodes. Provide approvalManager in WorkflowEngineOptions.',
+        definition.id,
+        run.runId,
+      );
+    }
+
+    const config = node.approval;
+    const message = config?.message ?? `Approval required for node ${node.id} in workflow ${run.workflowId}`;
+
+    const approval = await this.approvalManager.requestApproval({
+      workflowRunId: run.runId,
+      nodeId: node.id,
+      message,
+      callbackUrl: config?.callbackUrl,
+    });
+
+    logger.info(`Waiting for approval ${approval.id} on node ${node.id} (run: ${run.runId})`);
+
+    const status = await this.approvalManager.waitForApproval(approval.id, config?.timeoutMs);
+
+    if (status === 'approved') {
+      logger.info(`Approval ${approval.id} granted for node ${node.id}`);
+      return { approved: true };
+    }
+
+    if (status === 'timed_out') {
+      const timeoutAction = config?.timeoutAction ?? 'reject';
+      if (timeoutAction === 'approve') {
+        logger.info(`Approval ${approval.id} auto-approved on timeout for node ${node.id}`);
+        return { approved: true };
+      }
+      throw new WorkflowError(
+        `Approval timed out for node ${node.id} after ${config?.timeoutMs}ms`,
+        definition.id,
+        run.runId,
+      );
+    }
+
+    // status === 'rejected'
+    throw new WorkflowError(
+      `Approval rejected for node ${node.id}`,
+      definition.id,
+      run.runId,
+    );
   }
 
   private async executeStateTask(

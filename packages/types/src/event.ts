@@ -94,4 +94,37 @@ export const EventTypes = {
   ALERT_FIRED: 'alert.fired',
   ALERT_RESOLVED: 'alert.resolved',
   ALERT_ACKNOWLEDGED: 'alert.acknowledged',
+
+  // Agent loop events
+  AGENT_PLAN_CREATED: 'agent.plan.created',
+  AGENT_PLAN_STEP_STARTED: 'agent.plan.step.started',
+  AGENT_PLAN_STEP_COMPLETED: 'agent.plan.step.completed',
+  AGENT_PLAN_REVISED: 'agent.plan.revised',
+  AGENT_REFLECTION: 'agent.reflection',
+  AGENT_LOOP_ITERATION: 'agent.loop.iteration',
+  AGENT_LOOP_COMPLETED: 'agent.loop.completed',
+
+  // Handoff events
+  AGENT_HANDOFF_REQUESTED: 'agent.handoff.requested',
+  AGENT_HANDOFF_ACCEPTED: 'agent.handoff.accepted',
+  AGENT_HANDOFF_REJECTED: 'agent.handoff.rejected',
+
+  // Guardrail events
+  GUARDRAIL_TRIGGERED: 'guardrail.triggered',
+  GUARDRAIL_BLOCKED: 'guardrail.blocked',
+  GUARDRAIL_REWRITTEN: 'guardrail.rewritten',
+
+  // Approval events
+  APPROVAL_REQUESTED: 'approval.requested',
+  APPROVAL_APPROVED: 'approval.approved',
+  APPROVAL_REJECTED: 'approval.rejected',
+  APPROVAL_TIMED_OUT: 'approval.timed_out',
+
+  // Policy events
+  POLICY_EVALUATED: 'policy.evaluated',
+  POLICY_VIOLATED: 'policy.violated',
+
+  // Eval events
+  EVAL_STARTED: 'eval.started',
+  EVAL_COMPLETED: 'eval.completed',
 } as const;

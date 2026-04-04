@@ -1,27 +1,35 @@
 /**
  * Memory Manager - 内存管理实现
  */
-import type { 
-  IMemoryManager, 
-  MemoryScope, 
-  MemoryEntry, 
+import type {
+  IMemoryManager,
+  MemoryScope,
+  MemoryEntry,
   VectorMemoryEntry,
-  ConversationTurn 
+  ConversationTurn,
+  IVectorStore,
+  IEmbeddingProvider,
 } from '@thematrix/types';
-import { Logger } from '@thematrix/utils';
+import { Logger, generateId } from '@thematrix/utils';
 import Database from 'better-sqlite3';
 
 const logger = new Logger({ prefix: 'MemoryManager' });
 
 export interface MemoryManagerOptions {
   dbPath?: string;
+  vectorStore?: IVectorStore;
+  embeddingProvider?: IEmbeddingProvider;
 }
 
 export class MemoryManager implements IMemoryManager {
   private db: Database.Database;
+  private vectorStore?: IVectorStore;
+  private embeddingProvider?: IEmbeddingProvider;
 
   constructor(options: MemoryManagerOptions = {}) {
     this.db = new Database(options.dbPath ?? ':memory:');
+    this.vectorStore = options.vectorStore;
+    this.embeddingProvider = options.embeddingProvider;
     this.initSchema();
   }
 
@@ -128,14 +136,38 @@ export class MemoryManager implements IMemoryManager {
     }));
   }
 
-  // Vector Memory (placeholder - will use sqlite-vss in future)
+  // Vector Memory
   async embed(
-    scope: MemoryScope, 
-    ownerId: string, 
-    content: string, 
+    scope: MemoryScope,
+    ownerId: string,
+    content: string,
     metadata?: Record<string, unknown>
   ): Promise<string> {
-    // Placeholder implementation - stores as regular KV for now
+    // If vector store and embedding provider are available, use real vector storage
+    if (this.vectorStore && this.embeddingProvider) {
+      const collectionName = `${scope}:${ownerId}`;
+      const id = generateId();
+
+      // Ensure collection exists (idempotent)
+      try {
+        await this.vectorStore.createCollection(collectionName, this.embeddingProvider.dimension);
+      } catch {
+        // Collection may already exist
+      }
+
+      const [embedding] = await this.embeddingProvider.embed([content]);
+      await this.vectorStore.upsert(collectionName, [
+        {
+          id,
+          content,
+          embedding,
+          metadata: metadata ?? {},
+        },
+      ]);
+      return id;
+    }
+
+    // Fallback: stores as regular KV
     const id = `vec-${Date.now()}`;
     await this.set(scope, ownerId, `__vec_${id}`, {
       content,
@@ -146,14 +178,34 @@ export class MemoryManager implements IMemoryManager {
   }
 
   async search(
-    scope: MemoryScope, 
-    ownerId: string, 
-    query: string, 
+    scope: MemoryScope,
+    ownerId: string,
+    query: string,
     topK: number = 5
   ): Promise<VectorMemoryEntry[]> {
-    // Placeholder - simple text search for now
+    // If vector store and embedding provider are available, use real vector search
+    if (this.vectorStore && this.embeddingProvider) {
+      const collectionName = `${scope}:${ownerId}`;
+      const [queryEmbedding] = await this.embeddingProvider.embed([query]);
+
+      try {
+        const results = await this.vectorStore.query(collectionName, queryEmbedding, topK);
+        return results.map(r => ({
+          id: r.id,
+          content: r.content,
+          embedding: [],
+          metadata: r.metadata,
+          score: r.score,
+        }));
+      } catch {
+        // Collection may not exist yet
+        return [];
+      }
+    }
+
+    // Fallback: simple text search
     const entries = await this.list(scope, ownerId, '__vec_');
-    
+
     return entries.slice(0, topK).map(entry => ({
       id: entry.key.replace('__vec_', ''),
       content: (entry.value as { content: string }).content,

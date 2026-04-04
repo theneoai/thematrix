@@ -4,7 +4,7 @@
 
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http';
 import { URL } from 'node:url';
-import type { DomainEvent, ClusterNode, ClusterStats, AlertRule, Alert } from '@thematrix/types';
+import type { DomainEvent, ClusterNode, ClusterStats, AlertRule, Alert, IApprovalManager } from '@thematrix/types';
 import { Logger } from '@thematrix/utils';
 
 // ============================================================
@@ -72,6 +72,7 @@ export interface MonitorDataProviders {
   getActiveAlerts?: () => Alert[];
   getAlertRules?: () => AlertRule[];
   getMetrics?: () => Promise<string>;
+  approvalManager?: IApprovalManager;
 }
 
 // ============================================================
@@ -143,6 +144,12 @@ export class MonitorAPI {
     this.route('GET', '/api/alerts', this.handleListAlerts.bind(this));
     this.route('GET', '/api/alerts/rules', this.handleListAlertRules.bind(this));
 
+    // Approval routes
+    this.route('GET', '/api/approvals', this.handleListApprovals.bind(this));
+    this.route('GET', '/api/approvals/:id', this.handleGetApproval.bind(this));
+    this.route('POST', '/api/approvals/:id/approve', this.handleApprove.bind(this));
+    this.route('POST', '/api/approvals/:id/reject', this.handleReject.bind(this));
+
     // Metrics & Health
     this.route('GET', '/metrics', this.handleMetrics.bind(this));
     this.route('GET', '/health', this.handleHealth.bind(this));
@@ -173,7 +180,7 @@ export class MonitorAPI {
   async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     // CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
     if (req.method === 'OPTIONS') {
@@ -318,5 +325,62 @@ export class MonitorAPI {
 
   private async handleHealth(_req: IncomingMessage, res: ServerResponse): Promise<void> {
     this.sendJson(res, 200, { status: 'ok', timestamp: new Date().toISOString() });
+  }
+
+  // ----------------------------------------------------------
+  // Approval Handlers
+  // ----------------------------------------------------------
+
+  private async handleListApprovals(_req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.providers.approvalManager) return this.sendNotImplemented(res);
+    const approvals = this.providers.approvalManager.listPending();
+    this.sendJson(res, 200, { approvals });
+  }
+
+  private async handleGetApproval(_req: IncomingMessage, res: ServerResponse, params: Record<string, string>): Promise<void> {
+    if (!this.providers.approvalManager) return this.sendNotImplemented(res);
+    const approval = this.providers.approvalManager.getStatus(params.id);
+    if (!approval) return this.sendJson(res, 404, { error: 'Approval not found' });
+    this.sendJson(res, 200, approval);
+  }
+
+  private async handleApprove(req: IncomingMessage, res: ServerResponse, params: Record<string, string>): Promise<void> {
+    if (!this.providers.approvalManager) return this.sendNotImplemented(res);
+    try {
+      const body = await this.parseBody(req);
+      await this.providers.approvalManager.approve(params.id, body.respondedBy);
+      this.sendJson(res, 200, { status: 'approved' });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.sendJson(res, 400, { error: message });
+    }
+  }
+
+  private async handleReject(req: IncomingMessage, res: ServerResponse, params: Record<string, string>): Promise<void> {
+    if (!this.providers.approvalManager) return this.sendNotImplemented(res);
+    try {
+      const body = await this.parseBody(req);
+      await this.providers.approvalManager.reject(params.id, body.respondedBy);
+      this.sendJson(res, 200, { status: 'rejected' });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.sendJson(res, 400, { error: message });
+    }
+  }
+
+  private parseBody(req: IncomingMessage): Promise<Record<string, string>> {
+    return new Promise((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => chunks.push(chunk));
+      req.on('end', () => {
+        try {
+          const raw = Buffer.concat(chunks).toString('utf-8');
+          resolve(raw ? JSON.parse(raw) : {});
+        } catch (err) {
+          reject(new Error('Invalid JSON body'));
+        }
+      });
+      req.on('error', reject);
+    });
   }
 }

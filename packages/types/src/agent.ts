@@ -66,6 +66,118 @@ export interface AgentDefinition {
     maxCostUsd?: number;
     period?: 'hourly' | 'daily' | 'per-run' | 'unlimited';
   };
+  /** Agent loop configuration -- enables autonomous multi-turn execution */
+  loop?: AgentLoopConfig;
+  /** Output schema for structured output validation */
+  outputSchema?: Record<string, unknown>;
+  /** Guardrail hooks applied to input/output */
+  guardrails?: GuardrailConfig[];
+}
+
+// ============================================================
+// Agent Loop (Agentic Execution)
+// ============================================================
+
+export type AgentExecutionMode = 'single-turn' | 'loop' | 'plan-and-execute';
+
+export interface AgentLoopConfig {
+  /** Execution mode: single-turn (legacy), loop (autonomous), plan-and-execute */
+  mode: AgentExecutionMode;
+  /** Maximum iterations before forced stop (safety limit) */
+  maxIterations?: number;
+  /** Maximum total tokens across all iterations */
+  maxTotalTokens?: number;
+  /** Enable self-reflection after each iteration */
+  enableReflection?: boolean;
+  /** Enable planning step before execution */
+  enablePlanning?: boolean;
+  /** Custom exit condition evaluated after each iteration */
+  exitCondition?: string;
+  /** Handoff targets: agents this agent can delegate to */
+  handoffTargets?: string[];
+}
+
+/** A single step in an agent-generated plan */
+export interface PlanStep {
+  id: string;
+  description: string;
+  agentId?: string;
+  toolName?: string;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+  output?: unknown;
+  dependsOn?: string[];
+}
+
+/** Agent-generated execution plan */
+export interface AgentPlan {
+  planId: string;
+  goal: string;
+  steps: PlanStep[];
+  createdAt: Date;
+  status: 'draft' | 'executing' | 'completed' | 'failed' | 'revised';
+  revision?: number;
+}
+
+/** Reflection result from agent self-evaluation */
+export interface ReflectionResult {
+  quality: 'good' | 'acceptable' | 'poor';
+  issues: string[];
+  suggestion: string;
+  shouldRetry: boolean;
+  shouldRevise: boolean;
+}
+
+// ============================================================
+// Guardrails
+// ============================================================
+
+export type GuardrailType = 'input' | 'output' | 'both';
+
+export interface GuardrailConfig {
+  id: string;
+  name: string;
+  type: GuardrailType;
+  /** Built-in guardrail: content-safety, pii-detection, schema-validation, prompt-injection */
+  builtin?: string;
+  /** Custom guardrail: LLM-based evaluation prompt */
+  prompt?: string;
+  /** Action on violation */
+  action: 'block' | 'warn' | 'rewrite';
+  /** Guardrail-specific configuration */
+  config?: Record<string, unknown>;
+}
+
+export interface GuardrailResult {
+  guardrailId: string;
+  passed: boolean;
+  action: 'block' | 'warn' | 'rewrite';
+  violations: GuardrailViolation[];
+  rewrittenContent?: string;
+}
+
+export interface GuardrailViolation {
+  type: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  message: string;
+  span?: { start: number; end: number };
+}
+
+// ============================================================
+// Agent Handoff
+// ============================================================
+
+export interface HandoffRequest {
+  fromAgentId: string;
+  toAgentId: string;
+  reason: string;
+  context: Record<string, unknown>;
+  conversationHistory?: boolean;
+}
+
+export interface HandoffResult {
+  accepted: boolean;
+  output?: string;
+  error?: string;
 }
 
 export interface AgentMetrics {

@@ -18,3 +18,6 @@ export * from './provider.js';
 export * from './executor.js';
 export * from './gateway.js';
 export * from './cluster.js';
+
+// Export MCP types
+export * from './mcp.js';

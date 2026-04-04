@@ -40,6 +40,20 @@ export interface ChatRequest {
   maxTokens?: number;
   topP?: number;
   stop?: string[];
+  /** Structured output: force LLM to respond in a specific JSON schema */
+  responseFormat?: ResponseFormat;
+}
+
+export type ResponseFormat =
+  | { type: 'text' }
+  | { type: 'json_object' }
+  | { type: 'json_schema'; schema: JsonSchemaDefinition };
+
+export interface JsonSchemaDefinition {
+  name: string;
+  description?: string;
+  schema: Record<string, unknown>;
+  strict?: boolean;
 }
 
 export interface ChatResponse {
