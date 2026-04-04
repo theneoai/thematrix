@@ -120,7 +120,7 @@ export class WorkflowEngine {
     logger.info(`Workflow ${definition.id} started (run: ${runId})`);
 
     // 设置全局超时
-    let timeoutHandle: ReturnType<typeof setTimeout>;
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeoutHandle = setTimeout(() => {
         reject(new WorkflowError(
@@ -137,7 +137,8 @@ export class WorkflowEngine {
       : this.executeStateMachine(definition, run);
 
     // 竞争执行和超时，完成后清除计时器
-    Promise.race([executionPromise, timeoutPromise])
+    // void is intentional: workflow runs asynchronously; caller polls via getRun()
+    void Promise.race([executionPromise, timeoutPromise])
       .then(() => {
         clearTimeout(timeoutHandle);
         return this.completeWorkflow(runId);
@@ -145,6 +146,10 @@ export class WorkflowEngine {
       .catch(error => {
         clearTimeout(timeoutHandle);
         return this.handleWorkflowError(runId, error);
+      })
+      .catch(err => {
+        // completeWorkflow or handleWorkflowError itself threw — last-resort log
+        logger.error(`Critical: workflow lifecycle handler failed for run ${runId}:`, err);
       });
 
     return run;
@@ -374,7 +379,7 @@ export class WorkflowEngine {
 
     const sm = definition.stateMachine;
     let currentState = sm.initialState;
-    const maxSteps = Object.keys(sm.states).length * 100;
+    const maxSteps = Object.keys(sm.states).length * 10;
     let steps = 0;
     const abortController = this.abortControllers.get(run.runId)!;
 
@@ -426,8 +431,8 @@ export class WorkflowEngine {
             throw new WorkflowError(`No matching choice for state: ${currentState}`, definition.id, run.runId);
           }
         } else {
-          // Task state
-          const output = await this.executeStateTask(definition, currentState, state, run);
+          // Task state — apply retry config if present
+          const output = await this.executeStateTaskWithRetry(definition, currentState, state, run);
           run.context.nodeOutputs[currentState] = output;
           nextState = state.next;
         }
@@ -463,10 +468,13 @@ export class WorkflowEngine {
     const agentDef = await this.resolveAgentDefinition(agentRef);
     const runtime = await this.createAgentRuntime(agentDef, run.runId);
 
-    const input = this.prepareNodeInput(node, run.context);
-    const output = await runtime.runTurn(JSON.stringify(input));
-    
-    return { result: output };
+    try {
+      const input = this.prepareNodeInput(node, run.context);
+      const output = await runtime.runTurn(JSON.stringify(input));
+      return { result: output };
+    } finally {
+      await runtime.stop();
+    }
   }
 
   private async executeStateTask(
@@ -487,13 +495,44 @@ export class WorkflowEngine {
     const agentDef = await this.resolveAgentDefinition(agentRef);
     const runtime = await this.createAgentRuntime(agentDef, run.runId);
 
-    const input = state.inputMapping 
-      ? this.mapInput(state.inputMapping, run.context)
-      : {};
-    
-    const output = await runtime.runTurn(JSON.stringify(input));
-    
-    return { result: output };
+    try {
+      const input = state.inputMapping
+        ? this.mapInput(state.inputMapping, run.context)
+        : {};
+      const output = await runtime.runTurn(JSON.stringify(input));
+      return { result: output };
+    } finally {
+      await runtime.stop();
+    }
+  }
+
+  private async executeStateTaskWithRetry(
+    definition: WorkflowDefinition,
+    stateId: string,
+    state: { agentId?: string; inputMapping?: Record<string, string>; retry?: { maxRetries: number; retryDelayMs: number } },
+    run: WorkflowRun
+  ): Promise<unknown> {
+    const maxRetries = state.retry?.maxRetries ?? 0;
+    const retryDelayMs = state.retry?.retryDelayMs ?? 1000;
+    let lastError: Error | undefined;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await this.executeStateTask(definition, stateId, state, run);
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        if (attempt === maxRetries) break;
+
+        const classification = classifyError(lastError);
+        if (!classification.retryable) throw lastError;
+
+        const backoffMs = classification.backoffMs ?? retryDelayMs;
+        logger.warn(`State ${stateId} attempt ${attempt + 1} failed, retrying in ${backoffMs}ms:`, lastError.message);
+        await sleep(backoffMs);
+      }
+    }
+
+    throw lastError ?? new Error('Unknown error');
   }
 
   private async resolveAgentDefinition(agentRef: { ref: string }): Promise<AgentDefinition> {
@@ -562,34 +601,46 @@ export class WorkflowEngine {
     if (path.startsWith("'") && path.endsWith("'")) {
       return path.slice(1, -1);
     }
-    
-    // 输入变量
+
+    // 输入变量: $.input.<key>
     if (path.startsWith('$.input.')) {
       const key = path.slice(8);
       return context.variables[key];
     }
-    
-    // 节点输出
+
+    // 节点输出: $.nodes.<nodeId>[.<field>...]
     if (path.startsWith('$.nodes.')) {
       const parts = path.slice(8).split('.');
       const nodeId = parts[0];
-      return context.nodeOutputs[nodeId];
+      let value: unknown = context.nodeOutputs[nodeId];
+      // Navigate remaining path segments into the output object
+      for (let i = 1; i < parts.length; i++) {
+        if (value === null || value === undefined) break;
+        value = (value as Record<string, unknown>)[parts[i]];
+      }
+      return value;
     }
-    
+
     return path;
   }
 
   private evaluateCondition(condition: string, context: WorkflowContext): boolean {
     try {
-      // 简单的条件评估（生产环境应使用更安全的表达式引擎）
-      // 支持: $.nodes.x.output.result == "value"
-      const match = condition.match(/\$\.nodes\.(\w+)\.output\.result\s*==\s*"([^"]+)"/);
-      if (match) {
-        const [, nodeId, expected] = match;
-        const output = context.nodeOutputs[nodeId];
-        return (output as { result?: string })?.result === expected;
+      // 支持: <path> == "value"
+      const eqMatch = condition.match(/^(\$[\w.]+)\s*==\s*"([^"]*)"$/);
+      if (eqMatch) {
+        const [, path, expected] = eqMatch;
+        return String(this.resolvePath(path, context) ?? '') === expected;
       }
-      return true;
+      // 支持: <path> != "value"
+      const neqMatch = condition.match(/^(\$[\w.]+)\s*!=\s*"([^"]*)"$/);
+      if (neqMatch) {
+        const [, path, expected] = neqMatch;
+        return String(this.resolvePath(path, context) ?? '') !== expected;
+      }
+      // Unrecognized condition — fail loudly rather than silently evaluating to true
+      logger.warn(`Unsupported condition syntax: "${condition}" — evaluating as false`);
+      return false;
     } catch {
       return false;
     }
@@ -621,7 +672,7 @@ export class WorkflowEngine {
       durationMs: duration * 1000,
     });
 
-    this.cleanup(runId);
+    await this.cleanup(runId);
     logger.info(`Workflow ${run.workflowId} completed (run: ${runId}, duration: ${duration}s)`);
   }
 
@@ -662,7 +713,7 @@ export class WorkflowEngine {
       status: 'failed',
     });
 
-    this.cleanup(runId);
+    await this.cleanup(runId);
     logger.error(`Workflow ${run.workflowId} failed:`, error);
   }
 
@@ -743,7 +794,7 @@ export class WorkflowEngine {
       runId,
     });
 
-    this.cleanup(runId);
+    await this.cleanup(runId);
     logger.info(`Workflow ${run.workflowId} cancelled (run: ${runId})`);
   }
 
@@ -759,7 +810,20 @@ export class WorkflowEngine {
     return this.runStats.get(runId);
   }
 
-  private cleanup(runId: string): void {
+  private async cleanup(runId: string): Promise<void> {
+    // Stop any agent runtimes that are still running (e.g. on normal workflow completion)
+    const agents = this.activeAgents.get(runId);
+    if (agents) {
+      for (const runtime of agents.values()) {
+        if (runtime.getStatus() !== 'stopped') {
+          try {
+            await runtime.stop();
+          } catch (err) {
+            logger.warn(`Failed to stop agent ${runtime.instanceId} during cleanup:`, err);
+          }
+        }
+      }
+    }
     this.activeAgents.delete(runId);
     this.abortControllers.delete(runId);
     this.runStats.delete(runId);

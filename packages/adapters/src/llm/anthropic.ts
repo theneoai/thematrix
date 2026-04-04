@@ -51,7 +51,7 @@ export class AnthropicAdapter implements LLMAdapter {
 
   constructor(config: AnthropicConfig) {
     this.config = {
-      defaultModel: 'claude-3-sonnet-20240229',
+      defaultModel: 'claude-opus-4-5',
       ...config,
     };
   }
@@ -87,13 +87,13 @@ export class AnthropicAdapter implements LLMAdapter {
       model: data.model,
       content: data.content.find((c) => c.type === 'text')?.text ?? '',
       toolCalls: data.content
-        .filter((c) => c.type === 'tool_use')
+        .filter((c) => c.type === 'tool_use' && c.id && c.name)
         .map((c) => ({
-          id: c.id!,
+          id: c.id as string,
           type: 'function' as const,
           function: {
-            name: c.name!,
-            arguments: JSON.stringify(c.input),
+            name: c.name as string,
+            arguments: JSON.stringify(c.input ?? {}),
           },
         })),
       usage: {
@@ -155,12 +155,12 @@ export class AnthropicAdapter implements LLMAdapter {
               const event = JSON.parse(data) as AnthropicStreamEvent;
               
               if (event.type === 'message_start') {
-                messageId = event.message!.id;
+                messageId = event.message?.id ?? messageId;
               } else if (event.type === 'content_block_delta') {
-                if (event.delta!.type === 'text_delta') {
+                if (event.delta?.type === 'text_delta') {
                   yield {
                     id: messageId,
-                    content: event.delta!.text,
+                    content: event.delta.text,
                   };
                 }
               } else if (event.type === 'message_stop') {
@@ -184,13 +184,39 @@ export class AnthropicAdapter implements LLMAdapter {
     return Math.ceil(text.length / 4);
   }
 
-  private formatMessages(messages: ChatMessage[]): Array<{ role: string; content: string }> {
-    const nonSystemMessages = messages.filter(m => m.role !== 'system');
-    
-    return nonSystemMessages.map(m => ({
-      role: m.role === 'assistant' ? 'assistant' : 'user',
-      content: m.content,
-    }));
+  private formatMessages(messages: ChatMessage[]): unknown[] {
+    return messages
+      .filter(m => m.role !== 'system')
+      .flatMap((m): unknown[] => {
+        // tool role → user message containing tool_result blocks
+        if (m.role === 'tool') {
+          if (m.toolResults && m.toolResults.length > 0) {
+            return [{
+              role: 'user',
+              content: m.toolResults.map(r => ({
+                type: 'tool_result',
+                tool_use_id: r.toolCallId,
+                content: r.content,
+              })),
+            }];
+          }
+          // Fallback: plain user message (shouldn't happen in normal flow)
+          return [{ role: 'user', content: m.content }];
+        }
+        // assistant with tool calls → structured content with tool_use blocks
+        if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
+          const content: unknown[] = [];
+          if (m.content) content.push({ type: 'text', text: m.content });
+          for (const call of m.toolCalls) {
+            let input: unknown = {};
+            try { input = JSON.parse(call.function.arguments); } catch { /* keep empty */ }
+            content.push({ type: 'tool_use', id: call.id, name: call.function.name, input });
+          }
+          return [{ role: 'assistant', content }];
+        }
+        // plain user / assistant messages
+        return [{ role: m.role, content: m.content }];
+      });
   }
 
   private formatTools(tools: ToolDefinition[]): unknown[] {

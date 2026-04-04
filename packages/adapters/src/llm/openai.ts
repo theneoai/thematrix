@@ -64,7 +64,7 @@ export class OpenAIAdapter implements LLMAdapter {
 
   constructor(config: OpenAIConfig) {
     this.config = {
-      defaultModel: 'gpt-4',
+      defaultModel: 'gpt-4o',
       ...config,
     };
   }
@@ -190,12 +190,30 @@ export class OpenAIAdapter implements LLMAdapter {
   }
 
   private formatMessages(messages: ChatMessage[]): unknown[] {
-    return messages.map(m => ({
-      role: m.role,
-      content: m.content,
-      ...(m.toolCalls && { tool_calls: m.toolCalls }),
-      ...(m.toolResults && { tool_results: m.toolResults }),
-    }));
+    const result: unknown[] = [];
+    for (const m of messages) {
+      if (m.role === 'tool') {
+        // OpenAI requires one message per tool result, each with tool_call_id
+        if (m.toolResults && m.toolResults.length > 0) {
+          for (const r of m.toolResults) {
+            result.push({ role: 'tool', tool_call_id: r.toolCallId, content: r.content });
+          }
+        } else {
+          // Fallback when toolResults metadata is missing
+          result.push({ role: 'tool', content: m.content });
+        }
+      } else if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
+        // Assistant message that triggered tool calls
+        result.push({
+          role: 'assistant',
+          content: m.content || null,
+          tool_calls: m.toolCalls,
+        });
+      } else {
+        result.push({ role: m.role, content: m.content });
+      }
+    }
+    return result;
   }
 
   private formatTools(tools: ToolDefinition[]): unknown[] {

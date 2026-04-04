@@ -1,12 +1,31 @@
 /**
  * MiniMax 适配器
- * 使用 MiniMax ChatCompletion v2 (OpenAI 兼容) 接口
- * 文档: https://platform.minimaxi.com/document/ChatCompletion%20v2
- * 可用模型: MiniMax-Text-01 | abab6.5s-chat | abab6.5g-chat | abab5.5s-chat
  *
- * 认证方式: Authorization: Bearer <apiKey>
- * 可选: 在 baseUrl 中携带 GroupId，例如:
- *   https://api.minimax.chat/v1 (需在 headers 中设置 MM-GroupId，或通过 apiKey 格式 "<groupId>:<key>" 传入)
+ * MiniMax 同时支持 OpenAI 兼容协议和 Anthropic 兼容协议，本实现使用 OpenAI 兼容端点。
+ *
+ * API 端点：
+ *   国际 (Global)  : https://api.minimax.io/v1
+ *   中国大陆        : https://api.minimaxi.com/v1
+ *   说明：两套 API Key 和域名独立，不可混用，否则返回 "Invalid API key"
+ *
+ * 认证：Authorization: Bearer <API_KEY>
+ * 可选：MM-GroupId 请求头（旧版账户鉴权，新版 API Key 不需要）
+ *
+ * 主要文本模型（2026-04）：
+ *   MiniMax-M2.7           — 最新旗舰（默认）
+ *   MiniMax-M2.7-highspeed — 快速版
+ *   MiniMax-M2.5           — 高性能智能体模型
+ *   MiniMax-M2.5-highspeed — 快速版
+ *   MiniMax-M2.1           — SOTA 代码 & 智能体
+ *   MiniMax-M2.1-highspeed — 快速版
+ *   MiniMax-M1             — 混合注意力推理模型，1M token 上下文
+ *   MiniMax-Text-01        — 456B 参数，最长 4M 上下文
+ *   MiniMax-VL-01          — 视觉多模态版本
+ *
+ * 在 agent.yaml 中：
+ *   model:
+ *     provider: minimax
+ *     model: MiniMax-M2.7
  */
 import type {
   LLMAdapter,
@@ -22,10 +41,19 @@ const logger = new Logger({ prefix: 'MiniMaxAdapter' });
 
 export interface MiniMaxConfig {
   apiKey: string;
-  /** 可选: 账户 GroupId，部分接口鉴权需要 */
-  groupId?: string;
+  /**
+   * 国际: https://api.minimax.io/v1
+   * 大陆: https://api.minimaxi.com/v1
+   * 默认使用国际端点
+   */
   baseUrl?: string;
+  /** 默认: MiniMax-M2.7 */
   defaultModel?: string;
+  /**
+   * 旧版账户 GroupId（新版 API Key 已不需要）
+   * 若设置则作为 MM-GroupId 请求头发送
+   */
+  groupId?: string;
 }
 
 interface MiniMaxResponse {
@@ -58,34 +86,35 @@ interface MiniMaxStreamChunk {
 
 export class MiniMaxAdapter implements LLMAdapter {
   readonly provider = 'minimax';
-  private config: Required<Omit<MiniMaxConfig, 'groupId'>> & Pick<MiniMaxConfig, 'groupId'>;
+  private readonly baseUrl: string;
+  private readonly defaultModel: string;
+  private readonly apiKey: string;
+  private readonly groupId?: string;
 
   constructor(config: MiniMaxConfig) {
-    this.config = {
-      baseUrl: 'https://api.minimax.chat/v1',
-      defaultModel: 'MiniMax-Text-01',
-      groupId: config.groupId,
-      ...config,
-    };
+    this.apiKey = config.apiKey;
+    this.baseUrl = (config.baseUrl ?? 'https://api.minimax.io/v1').replace(/\/$/, '');
+    this.defaultModel = config.defaultModel ?? 'MiniMax-M2.7';
+    this.groupId = config.groupId;
   }
 
   private get headers(): Record<string, string> {
     const h: Record<string, string> = {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${this.config.apiKey}`,
+      'Authorization': `Bearer ${this.apiKey}`,
     };
-    if (this.config.groupId) {
-      h['MM-GroupId'] = this.config.groupId;
+    if (this.groupId) {
+      h['MM-GroupId'] = this.groupId;
     }
     return h;
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
-    const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
+    const response = await fetch(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: this.headers,
       body: JSON.stringify({
-        model: request.model || this.config.defaultModel,
+        model: request.model || this.defaultModel,
         messages: this.formatMessages(request.messages),
         max_tokens: request.maxTokens,
         temperature: request.temperature,
@@ -119,11 +148,11 @@ export class MiniMaxAdapter implements LLMAdapter {
   }
 
   async *chatStream(request: ChatRequest): AsyncIterable<ChatStreamChunk> {
-    const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
+    const response = await fetch(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: this.headers,
       body: JSON.stringify({
-        model: request.model || this.config.defaultModel,
+        model: request.model || this.defaultModel,
         messages: this.formatMessages(request.messages),
         max_tokens: request.maxTokens,
         temperature: request.temperature,
@@ -159,10 +188,10 @@ export class MiniMaxAdapter implements LLMAdapter {
           try {
             const chunk = JSON.parse(data) as MiniMaxStreamChunk;
             const choice = chunk.choices[0];
-            if (choice.delta.content) {
+            if (choice?.delta?.content) {
               yield { id: chunk.id, content: choice.delta.content };
             }
-            if (choice.finish_reason) {
+            if (choice?.finish_reason) {
               yield { id: chunk.id, finishReason: choice.finish_reason as 'stop' | 'length' | 'tool_calls' };
             }
           } catch {
@@ -176,11 +205,12 @@ export class MiniMaxAdapter implements LLMAdapter {
   }
 
   async countTokens(text: string): Promise<number> {
+    // MiniMax 未公开 tokenizer，按字符数估算
     return Math.ceil(text.length / 4);
   }
 
   private formatMessages(messages: ChatMessage[]): unknown[] {
-    // MiniMax ChatCompletion v2 supports 'system' role directly in messages array
+    // MiniMax OpenAI-compat 端点直接支持 system/user/assistant/tool 角色
     return messages.map(m => ({ role: m.role, content: m.content }));
   }
 

@@ -100,10 +100,15 @@ export class AgentRuntime {
       // Get conversation history
       const history = await this.memory.getHistory(this.instanceId);
       
-      // Build messages for LLM
-      const messages: { role: 'system' | 'user' | 'assistant' | 'tool'; content: string }[] = [
-        { role: 'system', content: this.definition.persona.systemPrompt },
-        ...history.map(h => ({ role: h.role as 'user' | 'assistant' | 'tool', content: h.content })),
+      // Build messages for LLM — preserve toolCalls/toolResults so adapters can format them correctly
+      const messages = [
+        { role: 'system' as const, content: this.definition.persona.systemPrompt },
+        ...history.map(h => ({
+          role: h.role as 'user' | 'assistant' | 'tool',
+          content: h.content,
+          toolCalls: h.toolCalls,
+          toolResults: h.toolResults,
+        })),
       ];
 
       // Call LLM
@@ -159,9 +164,14 @@ export class AgentRuntime {
 
         // Re-fetch history and call LLM again with tool results
         const updatedHistory = await this.memory.getHistory(this.instanceId);
-        const updatedMessages: { role: 'system' | 'user' | 'assistant' | 'tool'; content: string }[] = [
-          { role: 'system', content: this.definition.persona.systemPrompt },
-          ...updatedHistory.map(h => ({ role: h.role as 'user' | 'assistant' | 'tool', content: h.content })),
+        const updatedMessages = [
+          { role: 'system' as const, content: this.definition.persona.systemPrompt },
+          ...updatedHistory.map(h => ({
+            role: h.role as 'user' | 'assistant' | 'tool',
+            content: h.content,
+            toolCalls: h.toolCalls,
+            toolResults: h.toolResults,
+          })),
         ];
 
         currentResponse = await withRetry(
@@ -268,6 +278,7 @@ export class AgentRuntime {
   }
 
   async stop(): Promise<void> {
+    if (this.status === 'stopped') return; // idempotent
     this.status = 'stopped';
     this.metrics.endTime = new Date();
     await this.publishEvent(EventTypes.AGENT_STOPPED, {

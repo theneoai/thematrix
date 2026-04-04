@@ -104,15 +104,17 @@ export class MemoryManager implements IMemoryManager {
 
   async list(scope: MemoryScope, ownerId: string, prefix?: string): Promise<MemoryEntry[]> {
     this.cleanupExpired();
-    
+
     let sql = 'SELECT * FROM kv_store WHERE scope = ? AND owner_id = ?';
     const params: (string | MemoryScope)[] = [scope, ownerId];
-    
+
     if (prefix) {
-      sql += ' AND key LIKE ?';
-      params.push(`${prefix}%`);
+      // Escape SQL LIKE wildcards in the prefix to prevent unintended wildcard matching
+      const escapedPrefix = prefix.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+      sql += ' AND key LIKE ? ESCAPE \'\\\'';
+      params.push(`${escapedPrefix}%`);
     }
-    
+
     sql += ' ORDER BY key';
     
     const stmt = this.db.prepare(sql);
@@ -183,9 +185,9 @@ export class MemoryManager implements IMemoryManager {
 
   async getHistory(agentInstanceId: string, limit?: number): Promise<ConversationTurn[]> {
     let sql = `
-      SELECT * FROM conversation_history 
-      WHERE agent_instance_id = ? 
-      ORDER BY timestamp ASC
+      SELECT * FROM conversation_history
+      WHERE agent_instance_id = ?
+      ORDER BY rowid ASC
     `;
     const params: (string | number)[] = [agentInstanceId];
     

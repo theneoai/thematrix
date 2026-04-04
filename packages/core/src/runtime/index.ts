@@ -23,6 +23,8 @@ export interface LLMProviderConfig {
   apiKey?: string;
   baseUrl?: string;
   defaultModel?: string;
+  /** MiniMax 旧版账户鉴权 GroupId（新版 API Key 无需设置） */
+  groupId?: string;
 }
 
 export interface RuntimeOptions {
@@ -97,7 +99,7 @@ export class Runtime {
           return new OpenCodeAdapter({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, defaultModel: model });
         }
         if (provider === 'minimax' && cfg?.apiKey) {
-          return new MiniMaxAdapter({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, defaultModel: model });
+          return new MiniMaxAdapter({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, defaultModel: model, groupId: cfg.groupId });
         }
         // Fallback to mock when no API key configured
         return new MockLLMAdapter();
