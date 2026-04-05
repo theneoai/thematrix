@@ -63,11 +63,13 @@ export class GuardrailRunner {
   private eventBus: IEventBus;
   private llmAdapter?: LLMAdapter;
   private outputValidator: OutputValidator;
+  private correlationId: string;
 
-  constructor(eventBus: IEventBus, llmAdapter?: LLMAdapter) {
+  constructor(eventBus: IEventBus, llmAdapter?: LLMAdapter, correlationId?: string) {
     this.eventBus = eventBus;
     this.llmAdapter = llmAdapter;
     this.outputValidator = new OutputValidator();
+    this.correlationId = correlationId ?? '';
   }
 
   /**
@@ -490,7 +492,7 @@ export class GuardrailRunner {
       source: { kind: 'system', id: 'guardrail-runner' },
       timestamp: new Date(),
       payload,
-      correlationId: '',
+      correlationId: this.correlationId,
     };
     await this.eventBus.publish(event).catch(err => {
       logger.error('Failed to publish guardrail event:', err);

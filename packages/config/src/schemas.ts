@@ -62,7 +62,7 @@ export const guardrailConfigSchema = z.object({
   id: z.string(),
   name: z.string(),
   type: z.enum(['input', 'output', 'both']),
-  builtin: z.enum(['content-safety', 'pii-detection', 'schema-validation', 'prompt-injection']).optional(),
+  builtin: z.string().optional(),
   prompt: z.string().optional(),
   action: z.enum(['block', 'warn', 'rewrite']),
   config: z.record(z.unknown()).optional(),
@@ -87,6 +87,11 @@ export const agentDefinitionSchema = z.object({
   loop: agentLoopConfigSchema.optional(),
   guardrails: z.array(guardrailConfigSchema).optional(),
   outputSchema: z.record(z.unknown()).optional(),
+  tokenBudget: z.object({
+    maxTokens: z.number(),
+    maxCostUsd: z.number().optional(),
+    period: z.enum(['hourly', 'daily', 'per-run', 'unlimited']).optional(),
+  }).optional(),
 });
 
 export const approvalConfigSchema = z.object({
@@ -487,10 +492,10 @@ export const policyRuleSchema = z.object({
 export const policySchema = z.object({
   id: z.string(),
   name: z.string(),
+  description: z.string().optional(),
   scope: policyScopeSchema,
   rules: z.array(policyRuleSchema),
-  enforcement: z.enum(['enforce', 'audit']),
-  enabled: z.boolean().default(true),
+  enforcement: z.enum(['enforce', 'audit', 'warn']),
 });
 
 // ============================================================
@@ -513,9 +518,9 @@ export const environmentConfigSchema = z.object({
 
 export const evalMetricConfigSchema = z.object({
   name: z.string(),
-  type: z.enum(['exact-match', 'contains', 'json-validity', 'llm-judge', 'semantic-similarity']),
+  type: z.string(),
   prompt: z.string().optional(),
-  threshold: z.number().min(0).max(1).default(0.5),
+  threshold: z.number().optional(),
 });
 
 export const evalCaseSchema = z.object({
@@ -529,7 +534,6 @@ export const evalSuiteSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string().optional(),
-  agentId: z.string(),
   cases: z.array(evalCaseSchema),
   metrics: z.array(evalMetricConfigSchema),
 });

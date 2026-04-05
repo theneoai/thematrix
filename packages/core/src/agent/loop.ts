@@ -97,6 +97,8 @@ export class AgentLoop {
           lastOutput = `Loop terminated after ${maxConsecutiveErrors} consecutive errors. Last error: ${errorMsg}`;
           break;
         }
+        // Reset runtime from error state so next runTurn() call is allowed
+        this.runtime.resetFromError();
         // Retry with error feedback
         currentInput = `Previous attempt failed with error: ${errorMsg}\nPlease try a different approach.`;
         continue;

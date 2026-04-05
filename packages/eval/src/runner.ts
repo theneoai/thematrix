@@ -59,22 +59,19 @@ export class EvalRunner {
         results.push(result);
       }
     } else {
-      // Concurrent execution with proper semaphore pattern
+      // Concurrent execution with queued semaphore pattern
       let inFlight = 0;
-      let resolveSlot: (() => void) | null = null;
+      const waitQueue: Array<() => void> = [];
 
       const waitForSlot = (): Promise<void> => {
         if (inFlight < this.concurrency) return Promise.resolve();
-        return new Promise<void>((resolve) => { resolveSlot = resolve; });
+        return new Promise<void>((resolve) => { waitQueue.push(resolve); });
       };
 
       const releaseSlot = (): void => {
         inFlight--;
-        if (resolveSlot) {
-          const fn = resolveSlot;
-          resolveSlot = null;
-          fn();
-        }
+        const next = waitQueue.shift();
+        if (next) next();
       };
 
       const promises: Promise<void>[] = [];

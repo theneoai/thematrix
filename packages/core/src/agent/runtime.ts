@@ -68,7 +68,7 @@ export class AgentRuntime {
     this.tools = options.tools ?? new Map();
     this.guardrails = options.guardrails ?? options.definition.guardrails ?? [];
     this.outputSchema = options.outputSchema ?? options.definition.outputSchema;
-    this.guardrailRunner = new GuardrailRunner(options.eventBus, options.llmAdapter);
+    this.guardrailRunner = new GuardrailRunner(options.eventBus, options.llmAdapter, options.workflowRunId);
     this.outputValidator = new OutputValidator();
   }
 
@@ -381,6 +381,14 @@ export class AgentRuntime {
         instanceId: this.instanceId,
       });
       logger.info(`Agent ${this.definition.id} paused`);
+    }
+  }
+
+  /** Reset from error state to running, allowing retries */
+  resetFromError(): void {
+    if (this.status === 'error') {
+      this.status = 'running';
+      logger.info(`Agent ${this.definition.id} (${this.instanceId}) reset from error state`);
     }
   }
 

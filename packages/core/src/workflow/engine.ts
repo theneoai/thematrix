@@ -930,6 +930,11 @@ export class WorkflowEngine {
   }
 
   private async cleanup(runId: string): Promise<void> {
+    // Guard against double cleanup (e.g. cancel + async completion race)
+    if (!this.activeAgents.has(runId) && !this.abortControllers.has(runId)) {
+      return;
+    }
+
     // Stop any agent runtimes that are still running (e.g. on normal workflow completion)
     const agents = this.activeAgents.get(runId);
     if (agents) {

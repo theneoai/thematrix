@@ -52,7 +52,7 @@ export class EnvironmentManager {
     return this.environments.get(this.active);
   }
 
-  /** Resolve a provider config with environment overrides applied (deep merge) */
+  /** Resolve a provider config with environment overrides applied (shallow merge of override fields) */
   resolveProviderConfig(baseConfig: ProviderConfig): ProviderConfig {
     const envConfig = this.environments.get(this.active);
     if (!envConfig?.providers) return baseConfig;
