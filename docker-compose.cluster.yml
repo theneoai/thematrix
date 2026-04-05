@@ -1,0 +1,49 @@
+# TheMatrix Multi-Agent Cluster - Multi-node simulation
+version: "3.8"
+
+services:
+  matrix-control:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+      - "3002:3002"
+    volumes:
+      - control-data:/data
+    environment:
+      - NODE_ENV=production
+      - MATRIX_ROLE=control
+      - MATRIX_DATA_DIR=/data
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    restart: unless-stopped
+
+  matrix-worker-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["worker", "start", "--register", "http://matrix-control:3001"]
+    environment:
+      - NODE_ENV=production
+      - MATRIX_ROLE=worker
+      - MATRIX_NODE_LABELS=gpu=false,zone=us-east
+    depends_on:
+      - matrix-control
+    restart: unless-stopped
+
+  matrix-worker-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["worker", "start", "--register", "http://matrix-control:3001"]
+    environment:
+      - NODE_ENV=production
+      - MATRIX_ROLE=worker
+      - MATRIX_NODE_LABELS=gpu=false,zone=us-west
+    depends_on:
+      - matrix-control
+    restart: unless-stopped
+
+volumes:
+  control-data:
