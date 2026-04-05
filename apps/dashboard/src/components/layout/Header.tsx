@@ -13,6 +13,7 @@ const titles: Record<string, string> = {
   '/triggers': 'Triggers & Schedules',
   '/cluster': 'Cluster Management',
   '/alerts': 'Alerts & Notifications',
+  '/approvals': 'Approval Requests',
   '/settings': 'Settings',
 };
 

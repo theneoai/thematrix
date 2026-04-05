@@ -13,6 +13,7 @@ const actions = [
   { id: 'nav-triggers', label: 'Go to Triggers', section: 'Navigation', href: '/triggers' },
   { id: 'nav-cluster', label: 'Go to Cluster', section: 'Navigation', href: '/cluster' },
   { id: 'nav-alerts', label: 'Go to Alerts', section: 'Navigation', href: '/alerts' },
+  { id: 'nav-approvals', label: 'Go to Approvals', section: 'Navigation', href: '/approvals' },
   { id: 'nav-settings', label: 'Go to Settings', section: 'Navigation', href: '/settings' },
 ];
 
