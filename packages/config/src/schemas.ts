@@ -40,6 +40,38 @@ export const agentMemoryConfigSchema = z.object({
   scopes: z.array(memoryScopeConfigSchema),
 });
 
+// ============================================================
+// Agent Loop Config Schema
+// ============================================================
+
+export const agentLoopConfigSchema = z.object({
+  mode: z.enum(['single-turn', 'loop', 'plan-and-execute']),
+  maxIterations: z.number().optional(),
+  maxTotalTokens: z.number().optional(),
+  enableReflection: z.boolean().optional(),
+  enablePlanning: z.boolean().optional(),
+  exitCondition: z.string().optional(),
+  handoffTargets: z.array(z.string()).optional(),
+});
+
+// ============================================================
+// Guardrail Config Schema
+// ============================================================
+
+export const guardrailConfigSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  type: z.enum(['input', 'output', 'both']),
+  builtin: z.enum(['content-safety', 'pii-detection', 'schema-validation', 'prompt-injection']).optional(),
+  prompt: z.string().optional(),
+  action: z.enum(['block', 'warn', 'rewrite']),
+  config: z.record(z.unknown()).optional(),
+});
+
+// ============================================================
+// Agent Definition Schema
+// ============================================================
+
 export const agentDefinitionSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -52,18 +84,30 @@ export const agentDefinitionSchema = z.object({
   maxConcurrency: z.number().default(1),
   turnTimeoutMs: z.number().default(60000),
   metadata: z.record(z.unknown()).default({}),
+  loop: agentLoopConfigSchema.optional(),
+  guardrails: z.array(guardrailConfigSchema).optional(),
+  outputSchema: z.record(z.unknown()).optional(),
+});
+
+export const approvalConfigSchema = z.object({
+  strategy: z.enum(['webhook', 'auto-timeout']),
+  timeoutMs: z.number().optional(),
+  timeoutAction: z.enum(['approve', 'reject']).optional(),
+  callbackUrl: z.string().optional(),
+  message: z.string().optional(),
 });
 
 export const dagNodeSchema = z.object({
   id: z.string(),
   agentId: z.string(),
-  type: z.enum(['task', 'parallel', 'choice', 'wait']),
+  type: z.enum(['task', 'parallel', 'choice', 'wait', 'approval']),
   inputMapping: z.record(z.string()).optional(),
   condition: z.string().optional(),
   retry: z.object({
     maxRetries: z.number(),
     retryDelayMs: z.number(),
   }).optional(),
+  approval: approvalConfigSchema.optional(),
 });
 
 export const dagEdgeSchema = z.object({
@@ -124,29 +168,42 @@ export const agentRefSchema = z.object({
   overrides: z.record(z.unknown()).optional(),
 });
 
+export const dynamicWorkflowConfigSchema = z.object({
+  orchestratorAgentId: z.string(),
+  availableAgents: z.array(z.string()),
+  maxHandoffs: z.number().optional(),
+});
+
 export const workflowDefinitionSchema = z.object({
   id: z.string(),
   name: z.string(),
   version: z.string(),
   description: z.string().optional(),
-  mode: z.enum(['dag', 'state-machine']),
+  mode: z.enum(['dag', 'state-machine', 'dynamic']),
   agents: z.record(agentRefSchema),
   dag: dagDefinitionSchema.optional(),
   stateMachine: stateMachineDefinitionSchema.optional(),
+  dynamicConfig: dynamicWorkflowConfigSchema.optional(),
   sharedMemory: workflowMemoryConfigSchema,
   schedule: scheduleConfigSchema.optional(),
   integrations: z.array(integrationConfigSchema).optional(),
   timeoutMs: z.number().optional(),
   inputSchema: z.record(z.unknown()).optional(),
   outputSchema: z.record(z.unknown()).optional(),
+  execution: z.object({
+    backend: z.enum(['local', 'docker', 'ssh', 'kubernetes']),
+    config: z.record(z.unknown()).optional(),
+    parallelism: z.number().optional(),
+  }).optional(),
 }).refine(
   (data) => {
     if (data.mode === 'dag') return data.dag !== undefined;
     if (data.mode === 'state-machine') return data.stateMachine !== undefined;
+    if (data.mode === 'dynamic') return data.dynamicConfig !== undefined;
     return false;
   },
   {
-    message: 'dag or stateMachine must be provided based on mode',
+    message: 'dag, stateMachine, or dynamicConfig must be provided based on mode',
   }
 );
 
@@ -379,6 +436,105 @@ export const gatewayConfigSchema = z.object({
 });
 
 // ============================================================
+// MCP Config Schema
+// ============================================================
+
+export const mcpServerConfigSchema = z.object({
+  name: z.string(),
+  version: z.string(),
+  transport: z.enum(['stdio', 'http']),
+  port: z.number().optional(),
+  exposedWorkflows: z.array(z.string()).optional(),
+  exposedAgents: z.array(z.string()).optional(),
+});
+
+export const mcpClientConfigSchema = z.object({
+  name: z.string(),
+  transport: z.discriminatedUnion('type', [
+    z.object({
+      type: z.literal('stdio'),
+      command: z.string(),
+      args: z.array(z.string()).optional(),
+      env: z.record(z.string()).optional(),
+    }),
+    z.object({
+      type: z.literal('http'),
+      url: z.string(),
+      headers: z.record(z.string()).optional(),
+    }),
+  ]),
+  autoApprove: z.boolean().optional(),
+});
+
+// ============================================================
+// Policy Config Schema
+// ============================================================
+
+export const policyScopeSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('global') }),
+  z.object({ type: z.literal('workflow'), workflowId: z.string() }),
+  z.object({ type: z.literal('agent'), agentId: z.string() }),
+  z.object({ type: z.literal('environment'), environment: z.string() }),
+]);
+
+export const policyRuleSchema = z.object({
+  id: z.string(),
+  description: z.string(),
+  condition: z.string(),
+  effect: z.enum(['allow', 'deny']),
+});
+
+export const policySchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  scope: policyScopeSchema,
+  rules: z.array(policyRuleSchema),
+  enforcement: z.enum(['enforce', 'audit']),
+  enabled: z.boolean().default(true),
+});
+
+// ============================================================
+// Environment Config Schema
+// ============================================================
+
+export const environmentConfigSchema = z.object({
+  name: z.string(),
+  providers: z.record(z.record(z.unknown())).optional(),
+  execution: z.object({
+    backend: z.enum(['local', 'docker', 'ssh', 'kubernetes']),
+    config: z.record(z.unknown()).optional(),
+  }).optional(),
+  variables: z.record(z.string()).optional(),
+});
+
+// ============================================================
+// Eval Config Schema
+// ============================================================
+
+export const evalMetricConfigSchema = z.object({
+  name: z.string(),
+  type: z.enum(['exact-match', 'contains', 'json-validity', 'llm-judge', 'semantic-similarity']),
+  prompt: z.string().optional(),
+  threshold: z.number().min(0).max(1).default(0.5),
+});
+
+export const evalCaseSchema = z.object({
+  id: z.string(),
+  input: z.string(),
+  expectedOutput: z.string().optional(),
+  metadata: z.record(z.unknown()).optional(),
+});
+
+export const evalSuiteSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string().optional(),
+  agentId: z.string(),
+  cases: z.array(evalCaseSchema),
+  metrics: z.array(evalMetricConfigSchema),
+});
+
+// ============================================================
 // Full Matrix Config Schema (matrix.config.yaml)
 // ============================================================
 
@@ -394,6 +550,13 @@ export const matrixConfigSchema = z.object({
   cluster: clusterConfigSchema.optional(),
   triggers: z.array(triggerRuleSchema).optional(),
   schedules: z.array(cronScheduleSchema).optional(),
+  policies: z.array(policySchema).optional(),
+  environments: z.array(environmentConfigSchema).optional(),
+  activeEnvironment: z.string().optional(),
+  mcp: z.object({
+    server: mcpServerConfigSchema.optional(),
+    clients: z.array(mcpClientConfigSchema).optional(),
+  }).optional(),
 });
 
 // ============================================================
@@ -407,3 +570,10 @@ export type ProviderConfigInput = z.infer<typeof providerConfigSchema>;
 export type TriggerRuleInput = z.infer<typeof triggerRuleSchema>;
 export type CronScheduleInput = z.infer<typeof cronScheduleSchema>;
 export type AlertRuleInput = z.infer<typeof alertRuleSchema>;
+export type GuardrailConfigInput = z.infer<typeof guardrailConfigSchema>;
+export type AgentLoopConfigInput = z.infer<typeof agentLoopConfigSchema>;
+export type PolicyInput = z.infer<typeof policySchema>;
+export type EnvironmentConfigInput = z.infer<typeof environmentConfigSchema>;
+export type EvalSuiteInput = z.infer<typeof evalSuiteSchema>;
+export type MCPServerConfigInput = z.infer<typeof mcpServerConfigSchema>;
+export type MCPClientConfigInput = z.infer<typeof mcpClientConfigSchema>;
