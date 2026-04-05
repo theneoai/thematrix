@@ -5,8 +5,8 @@ import { api } from '@/lib/api-client';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 
 export default function ClusterPage() {
-  const { data: nodes } = useQuery({ queryKey: ['cluster-nodes'], queryFn: api.cluster.nodes });
-  const { data: health } = useQuery({ queryKey: ['cluster-health'], queryFn: api.cluster.health });
+  const { data: nodes, error: nodesError } = useQuery({ queryKey: ['cluster-nodes'], queryFn: api.cluster.nodes });
+  const { data: health, error: healthError } = useQuery({ queryKey: ['cluster-health'], queryFn: api.cluster.health });
 
   return (
     <div className="space-y-6">
@@ -35,6 +35,11 @@ export default function ClusterPage() {
       {/* Node List */}
       <div>
         <h2 className="text-lg font-medium mb-4">Nodes</h2>
+        {(nodesError || healthError) && (
+          <div className="rounded-lg border border-border bg-background-secondary p-8 text-center text-error mb-4">
+            Failed to load cluster data: {(nodesError ?? healthError)?.message}
+          </div>
+        )}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {nodes?.map((node) => (
             <div key={node.nodeId} className="rounded-lg border border-border bg-background-secondary p-4">

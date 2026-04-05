@@ -17,28 +17,30 @@ const actions = [
 ];
 
 export function CommandPalette() {
-  const { commandPaletteOpen, closeCommandPalette, openCommandPalette } = useUIStore();
+  const commandPaletteOpen = useUIStore((s) => s.commandPaletteOpen);
+  const closeCommandPalette = useUIStore((s) => s.closeCommandPalette);
   const router = useRouter();
 
-  // Global Cmd+K shortcut
+  // Global Cmd+K shortcut — stable listener, reads state from store directly
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
-        if (commandPaletteOpen) {
-          closeCommandPalette();
+        const store = useUIStore.getState();
+        if (store.commandPaletteOpen) {
+          store.closeCommandPalette();
         } else {
-          openCommandPalette();
+          store.openCommandPalette();
         }
       }
       if (e.key === 'Escape') {
-        closeCommandPalette();
+        useUIStore.getState().closeCommandPalette();
       }
     };
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [commandPaletteOpen, closeCommandPalette, openCommandPalette]);
+  }, []);
 
   if (!commandPaletteOpen) return null;
 

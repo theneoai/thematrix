@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 
 export default function ProvidersPage() {
-  const { data: tokenUsage } = useQuery({
+  const { data: tokenUsage, error } = useQuery({
     queryKey: ['token-usage'],
     queryFn: api.tokens.usage,
   });
@@ -15,6 +15,12 @@ export default function ProvidersPage() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">Model Providers & Token Pool</h1>
+
+      {error && (
+        <div className="rounded-lg border border-border bg-background-secondary p-8 text-center text-error">
+          Failed to load token usage: {error.message}
+        </div>
+      )}
 
       {/* Token Pool Overview */}
       <div className="grid gap-4 sm:grid-cols-3">

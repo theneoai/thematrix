@@ -6,10 +6,18 @@ import { StatusBadge } from '@/components/shared/StatusBadge';
 import Link from 'next/link';
 
 export function RunTimeline() {
-  const { data: workflows, isLoading } = useQuery({
+  const { data: workflows, isLoading, error } = useQuery({
     queryKey: ['workflows'],
     queryFn: api.workflows.list,
   });
+
+  if (error) {
+    return (
+      <div className="rounded-lg border border-border bg-background-secondary p-8 text-center text-error">
+        Failed to load workflows: {error.message}
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (

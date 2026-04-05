@@ -5,7 +5,7 @@ import { api } from '@/lib/api-client';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 
 export default function AgentsPage() {
-  const { data: agents, isLoading } = useQuery({
+  const { data: agents, isLoading, error } = useQuery({
     queryKey: ['agents'],
     queryFn: api.agents.list,
   });
@@ -15,7 +15,9 @@ export default function AgentsPage() {
       <h1 className="text-2xl font-semibold">Agent Catalog</h1>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {isLoading ? (
+        {error ? (
+          <p className="col-span-full text-center text-error py-8">Failed to load agents: {error.message}</p>
+        ) : isLoading ? (
           [1, 2, 3].map((i) => (
             <div key={i} className="h-40 animate-pulse rounded-lg border border-border bg-background-secondary" />
           ))

@@ -11,20 +11,32 @@ interface MetricCard {
 }
 
 export function MetricsGrid() {
-  const { data: workflows } = useQuery({
+  const { data: workflows, isLoading: wfLoading } = useQuery({
     queryKey: ['workflows'],
     queryFn: api.workflows.list,
   });
 
-  const { data: tokenUsage } = useQuery({
+  const { data: tokenUsage, isLoading: tokenLoading } = useQuery({
     queryKey: ['token-usage'],
     queryFn: api.tokens.usage,
   });
 
-  const { data: clusterHealth } = useQuery({
+  const { data: clusterHealth, isLoading: clusterLoading } = useQuery({
     queryKey: ['cluster-health'],
     queryFn: api.cluster.health,
   });
+
+  const isLoading = wfLoading || tokenLoading || clusterLoading;
+
+  if (isLoading) {
+    return (
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="h-20 animate-pulse rounded-lg border border-border bg-background-secondary" />
+        ))}
+      </div>
+    );
+  }
 
   const activeRuns = workflows?.filter(w => w.status === 'running').length ?? 0;
   const completedToday = workflows?.filter(w =>

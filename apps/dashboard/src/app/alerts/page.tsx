@@ -11,8 +11,8 @@ const severityColors: Record<string, string> = {
 };
 
 export default function AlertsPage() {
-  const { data: alerts } = useQuery({ queryKey: ['alerts'], queryFn: api.alerts.active });
-  const { data: rules } = useQuery({ queryKey: ['alert-rules'], queryFn: api.alerts.rules });
+  const { data: alerts, error: alertsError } = useQuery({ queryKey: ['alerts'], queryFn: api.alerts.active });
+  const { data: rules, error: rulesError } = useQuery({ queryKey: ['alert-rules'], queryFn: api.alerts.rules });
 
   return (
     <div className="space-y-8">
@@ -29,7 +29,11 @@ export default function AlertsPage() {
           ) : null}
         </h2>
 
-        {!alerts?.length ? (
+        {alertsError ? (
+          <div className="rounded-lg border border-border bg-background-secondary p-8 text-center text-error">
+            Failed to load alerts: {alertsError.message}
+          </div>
+        ) : !alerts?.length ? (
           <div className="rounded-lg border border-border bg-background-secondary p-8 text-center text-foreground-subtle">
             No active alerts. All systems healthy.
           </div>
@@ -74,6 +78,15 @@ export default function AlertsPage() {
               </tr>
             </thead>
             <tbody>
+              {rulesError ? (
+                <tr>
+                  <td colSpan={4} className="px-4 py-8 text-center text-error">Failed to load rules: {rulesError.message}</td>
+                </tr>
+              ) : !rules?.length ? (
+                <tr>
+                  <td colSpan={4} className="px-4 py-8 text-center text-foreground-subtle">No alert rules configured.</td>
+                </tr>
+              ) : null}
               {rules?.map((rule) => (
                 <tr key={rule.id} className="border-b border-border last:border-0">
                   <td className="px-4 py-3 text-foreground">{rule.name}</td>

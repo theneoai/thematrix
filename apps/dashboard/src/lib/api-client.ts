@@ -4,20 +4,30 @@
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
+const DEFAULT_TIMEOUT_MS = 15_000;
+
 async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
 
-  if (!res.ok) {
-    throw new Error(`API error: ${res.status} ${res.statusText}`);
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      signal: options?.signal ?? controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...options?.headers,
+      },
+    });
+
+    if (!res.ok) {
+      throw new Error(`API error: ${res.status} ${res.statusText}`);
+    }
+
+    return res.json() as Promise<T>;
+  } finally {
+    clearTimeout(timer);
   }
-
-  return res.json() as Promise<T>;
 }
 
 // Workflow endpoints
@@ -53,18 +63,30 @@ export const api = {
 };
 
 // SSE event stream
-export function createEventStream(
-  onEvent: (event: { type: string; data: unknown }) => void,
-): EventSource {
+export interface EventStreamOptions {
+  onEvent: (event: { type: string; data: unknown }) => void;
+  onError?: (error: Event) => void;
+  onOpen?: () => void;
+}
+
+export function createEventStream(options: EventStreamOptions): EventSource {
   const es = new EventSource(`${API_BASE}/api/events/stream`);
 
   es.onmessage = (e) => {
     try {
       const data = JSON.parse(e.data);
-      onEvent(data);
+      options.onEvent(data);
     } catch {
       // skip unparseable events
     }
+  };
+
+  es.onerror = (e) => {
+    options.onError?.(e);
+  };
+
+  es.onopen = () => {
+    options.onOpen?.();
   };
 
   return es;

@@ -1,22 +1,32 @@
 'use client';
 
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import Link from 'next/link';
 
 export default function WorkflowsPage() {
-  const { data: workflows, isLoading } = useQuery({
+  const [statusFilter, setStatusFilter] = useState('all');
+  const { data: workflows, isLoading, error } = useQuery({
     queryKey: ['workflows'],
     queryFn: api.workflows.list,
   });
+
+  const filteredWorkflows = workflows?.filter(
+    (w) => statusFilter === 'all' || w.status === statusFilter,
+  );
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Workflows</h1>
         <div className="flex gap-2">
-          <select className="rounded-md border border-border bg-background-secondary px-3 py-1.5 text-sm text-foreground-muted">
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="rounded-md border border-border bg-background-secondary px-3 py-1.5 text-sm text-foreground-muted"
+          >
             <option value="all">All Status</option>
             <option value="running">Running</option>
             <option value="completed">Completed</option>
@@ -38,20 +48,26 @@ export default function WorkflowsPage() {
             </tr>
           </thead>
           <tbody>
-            {isLoading ? (
+            {error ? (
+              <tr>
+                <td colSpan={6} className="px-4 py-8 text-center text-error">
+                  Failed to load workflows: {error.message}
+                </td>
+              </tr>
+            ) : isLoading ? (
               <tr>
                 <td colSpan={6} className="px-4 py-8 text-center text-foreground-subtle">
                   Loading workflows...
                 </td>
               </tr>
-            ) : !workflows?.length ? (
+            ) : !filteredWorkflows?.length ? (
               <tr>
                 <td colSpan={6} className="px-4 py-8 text-center text-foreground-subtle">
                   No workflow runs found
                 </td>
               </tr>
             ) : (
-              workflows.map((run) => (
+              filteredWorkflows.map((run) => (
                 <tr key={run.runId} className="border-b border-border last:border-0 hover:bg-background-secondary/50">
                   <td className="px-4 py-3">
                     <Link href={`/workflows/${run.runId}`} className="text-accent hover:underline font-mono text-xs">

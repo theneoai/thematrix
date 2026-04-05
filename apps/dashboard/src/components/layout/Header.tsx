@@ -1,7 +1,9 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
+import { useQuery } from '@tanstack/react-query';
 import { useUIStore } from '@/stores/ui';
+import { api } from '@/lib/api-client';
 
 const titles: Record<string, string> = {
   '/': 'Dashboard',
@@ -18,6 +20,14 @@ export function Header() {
   const pathname = usePathname();
   const openCommandPalette = useUIStore((s) => s.openCommandPalette);
 
+  const { data: health, error } = useQuery({
+    queryKey: ['health'],
+    queryFn: api.health,
+    refetchInterval: 30_000,
+    retry: 1,
+  });
+
+  const isConnected = !error && health?.status === 'ok';
   const title = titles[pathname] ?? 'TheMatrix';
 
   return (
@@ -38,8 +48,8 @@ export function Header() {
 
         {/* Connection indicator */}
         <div className="flex items-center gap-1.5 text-xs text-foreground-subtle">
-          <span className="h-2 w-2 rounded-full bg-success" />
-          Connected
+          <span className={`h-2 w-2 rounded-full ${isConnected ? 'bg-success' : 'bg-error'}`} />
+          {isConnected ? 'Connected' : 'Disconnected'}
         </div>
       </div>
     </header>
