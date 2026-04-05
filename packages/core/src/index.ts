@@ -28,6 +28,10 @@ export * from './agent/loop.js';
 export * from './agent/planner.js';
 export * from './agent/reflection.js';
 export * from './agent/handoff.js';
+export * from './agent/blackboard.js';
+export * from './agent/context-manager.js';
+export * from './agent/trace.js';
+export * from './agent/tool-composer.js';
 
 // Guardrails
 export * from './guardrails/index.js';

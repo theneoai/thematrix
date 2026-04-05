@@ -17,6 +17,9 @@ import { Logger, generateId } from '@thematrix/utils';
 import { AgentRuntime } from './runtime.js';
 import { AgentPlanner } from './planner.js';
 import { AgentReflector } from './reflection.js';
+import { ContextManager } from './context-manager.js';
+import { AgentTrace } from './trace.js';
+import type { TraceTree } from './trace.js';
 
 const logger = new Logger({ prefix: 'AgentLoop' });
 
@@ -28,11 +31,31 @@ export class AgentLoop {
   private config: AgentLoopConfig;
   private eventBus: IEventBus;
   private totalTokens = 0;
+  private contextManager?: ContextManager;
+  private trace?: AgentTrace;
 
   constructor(runtime: AgentRuntime, config: AgentLoopConfig) {
     this.runtime = runtime;
     this.config = config;
     this.eventBus = runtime.getEventBus();
+
+    // Initialize context manager if enabled
+    if (config.enableContextManagement) {
+      this.contextManager = new ContextManager(
+        runtime.getLLMAdapter(),
+        runtime.definition.model.model,
+        config.maxContextTokens,
+      );
+    }
+
+    // Initialize tracing if enabled
+    if (config.enableTracing) {
+      this.trace = new AgentTrace(
+        runtime.definition.id,
+        runtime.workflowRunId,
+        'agent-loop', // goal set on run()
+      );
+    }
   }
 
   /**
@@ -42,15 +65,58 @@ export class AgentLoop {
     const mode = this.config.mode;
     logger.info(`Starting agent loop in "${mode}" mode (agent=${this.runtime.definition.id})`);
 
-    switch (mode) {
-      case 'single-turn':
-        return this.runSingleTurn(input);
-      case 'loop':
-        return this.runLoop(input);
-      case 'plan-and-execute':
-        return this.runPlanAndExecute(input);
-      default:
-        throw new Error(`Unknown execution mode: ${mode}`);
+    // Re-create trace with actual goal if tracing is enabled
+    if (this.config.enableTracing) {
+      this.trace = new AgentTrace(
+        this.runtime.definition.id,
+        this.runtime.workflowRunId,
+        input.slice(0, 200),
+      );
+    }
+
+    let result: string;
+    const loopSpan = this.trace?.startSpan(`loop:${mode}`, 'turn', { mode, input: input.slice(0, 200) });
+
+    try {
+      switch (mode) {
+        case 'single-turn':
+          result = await this.runSingleTurn(input);
+          break;
+        case 'loop':
+          result = await this.runLoop(input);
+          break;
+        case 'plan-and-execute':
+          result = await this.runPlanAndExecute(input);
+          break;
+        default:
+          throw new Error(`Unknown execution mode: ${mode}`);
+      }
+
+      if (loopSpan) {
+        this.trace!.endSpan(loopSpan.id, {
+          status: 'success',
+          output: result.slice(0, 500),
+          tokensUsed: this.totalTokens,
+        });
+      }
+
+      // Publish trace if enabled
+      if (this.trace) {
+        await this.publishTrace(this.trace.getTrace());
+      }
+
+      return result;
+    } catch (error) {
+      if (loopSpan) {
+        this.trace!.endSpan(loopSpan.id, {
+          status: 'error',
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      if (this.trace) {
+        await this.publishTrace(this.trace.getTrace());
+      }
+      throw error;
     }
   }
 
@@ -84,6 +150,20 @@ export class AgentLoop {
       iteration++;
       logger.info(`Loop iteration ${iteration}/${maxIterations}`);
 
+      const iterSpan = this.trace?.startSpan(`iteration-${iteration}`, 'turn', { iteration });
+
+      // Context window management: auto-summarize if history is growing too large
+      if (this.contextManager) {
+        try {
+          await this.contextManager.manageContext(
+            this.runtime.instanceId,
+            this.runtime.getMemory(),
+          );
+        } catch (err) {
+          logger.warn(`Context management failed (non-fatal): ${(err as Error).message}`);
+        }
+      }
+
       try {
         lastOutput = await this.runtime.runTurn(currentInput);
         consecutiveErrors = 0;
@@ -91,6 +171,10 @@ export class AgentLoop {
         consecutiveErrors++;
         const errorMsg = error instanceof Error ? error.message : String(error);
         logger.error(`Loop iteration ${iteration} failed: ${errorMsg}`);
+
+        if (iterSpan) {
+          this.trace!.endSpan(iterSpan.id, { status: 'error', error: errorMsg });
+        }
 
         if (consecutiveErrors >= maxConsecutiveErrors) {
           logger.error(`${maxConsecutiveErrors} consecutive errors, stopping loop`);
@@ -106,39 +190,97 @@ export class AgentLoop {
 
       this.totalTokens = this.runtime.getMetrics().totalTokens;
 
+      if (iterSpan) {
+        this.trace!.endSpan(iterSpan.id, {
+          status: 'success',
+          output: lastOutput.slice(0, 300),
+          tokensUsed: this.totalTokens,
+        });
+      }
+
       await this.publishIteration(iteration, lastOutput);
 
       // Check termination conditions
       if (lastOutput.includes('[DONE]')) {
         logger.info('Agent signalled [DONE]');
+        this.trace?.addDecision({
+          id: generateId(),
+          type: 'terminate',
+          reasoning: 'Agent output contains [DONE] marker',
+          chosen: 'stop',
+          timestamp: new Date(),
+        });
         break;
       }
 
       if (this.config.exitCondition && lastOutput.includes(this.config.exitCondition)) {
         logger.info(`Exit condition met: "${this.config.exitCondition}"`);
+        this.trace?.addDecision({
+          id: generateId(),
+          type: 'terminate',
+          reasoning: `Exit condition "${this.config.exitCondition}" found in output`,
+          chosen: 'stop',
+          timestamp: new Date(),
+        });
         break;
       }
 
       if (this.totalTokens >= maxTokens) {
         logger.warn(`Token budget exhausted (${this.totalTokens}/${maxTokens})`);
+        this.trace?.addDecision({
+          id: generateId(),
+          type: 'terminate',
+          reasoning: `Token budget exhausted: ${this.totalTokens}/${maxTokens}`,
+          chosen: 'stop',
+          timestamp: new Date(),
+        });
         break;
       }
 
       // Optional reflection
       if (this.config.enableReflection) {
+        const reflectionSpan = this.trace?.startSpan('reflection', 'reflection');
         const reflector = this.createReflector();
         const history = await this.getHistorySummaries();
         const reflection = await reflector.reflect(input, lastOutput, history);
 
         if (reflection.quality === 'good') {
           logger.info('Reflection: quality is good, stopping loop');
+          if (reflectionSpan) {
+            this.trace!.endSpan(reflectionSpan.id, { status: 'success', output: 'quality=good' });
+          }
+          this.trace?.addDecision({
+            id: generateId(),
+            type: 'terminate',
+            reasoning: 'Reflection assessed quality as good',
+            chosen: 'stop',
+            timestamp: new Date(),
+          });
           break;
         }
 
         if (!reflection.shouldRetry) {
           logger.info('Reflection: shouldRetry=false, stopping loop');
+          if (reflectionSpan) {
+            this.trace!.endSpan(reflectionSpan.id, { status: 'success', output: 'shouldRetry=false' });
+          }
           break;
         }
+
+        if (reflectionSpan) {
+          this.trace!.endSpan(reflectionSpan.id, {
+            status: 'success',
+            output: `retry with: ${reflection.suggestion?.slice(0, 200) ?? 'no suggestion'}`,
+          });
+        }
+
+        this.trace?.addDecision({
+          id: generateId(),
+          type: 'retry',
+          reasoning: reflection.suggestion ?? 'Reflection suggested retry',
+          chosen: 'continue loop',
+          timestamp: new Date(),
+        });
 
         // Feed the suggestion back as input for the next iteration, preserving original goal
         currentInput = `Original goal: ${input}\n\nReflection feedback: ${reflection.suggestion || lastOutput}`;
@@ -162,12 +304,20 @@ export class AgentLoop {
     const maxRevisions = 3;
 
     // 1. Create plan
+    const planSpan = this.trace?.startSpan('create-plan', 'planning');
     const planner = this.createPlanner();
     const availableTools = Array.from(this.runtime.getTools().keys());
     const availableAgents = this.config.handoffTargets ?? [];
 
     let plan = await planner.createPlan(input, availableTools, availableAgents);
     plan.status = 'executing';
+
+    if (planSpan) {
+      this.trace!.endSpan(planSpan.id, {
+        status: 'success',
+        output: `Plan: ${plan.steps.length} steps`,
+      });
+    }
 
     const outputs: string[] = [];
     let iteration = 0;
@@ -205,8 +355,26 @@ export class AgentLoop {
           break;
         }
 
+        // Context window management before each step
+        if (this.contextManager) {
+          try {
+            await this.contextManager.manageContext(
+              this.runtime.instanceId,
+              this.runtime.getMemory(),
+            );
+          } catch (err) {
+            logger.warn(`Context management failed (non-fatal): ${(err as Error).message}`);
+          }
+        }
+
         step.status = 'running';
         await this.publishPlanStepStarted(plan, step);
+
+        const stepSpan = this.trace?.startSpan(`step:${step.id}`, 'turn', {
+          stepId: step.id,
+          description: step.description,
+          toolName: step.toolName,
+        });
 
         try {
           const stepInput = this.buildStepInput(input, step, outputs);
@@ -217,6 +385,14 @@ export class AgentLoop {
           step.output = stepOutput;
           outputs.push(stepOutput);
 
+          if (stepSpan) {
+            this.trace!.endSpan(stepSpan.id, {
+              status: 'success',
+              output: stepOutput.slice(0, 300),
+              tokensUsed: this.totalTokens,
+            });
+          }
+
           await this.publishPlanStepCompleted(plan, step);
           await this.publishIteration(iteration, stepOutput);
         } catch (error) {
@@ -224,11 +400,19 @@ export class AgentLoop {
           step.output = error instanceof Error ? error.message : String(error);
           logger.error(`Step ${step.id} failed: ${step.output}`);
 
+          if (stepSpan) {
+            this.trace!.endSpan(stepSpan.id, {
+              status: 'error',
+              error: String(step.output),
+            });
+          }
+
           await this.publishPlanStepCompleted(plan, step);
         }
 
         // 3. Reflect after each step (if enabled)
         if (this.config.enableReflection && step.status === 'completed') {
+          const reflectionSpan = this.trace?.startSpan('step-reflection', 'reflection');
           const reflector = this.createReflector();
           const history = outputs.slice();
           const reflection = await reflector.reflect(input, String(step.output), history);
@@ -236,11 +420,34 @@ export class AgentLoop {
           if (reflection.shouldRevise && revisionCount < maxRevisions) {
             logger.info(`Reflection suggests plan revision (${revisionCount + 1}/${maxRevisions})`);
             const feedback = reflection.suggestion || reflection.issues.join('; ');
+
+            if (reflectionSpan) {
+              this.trace!.endSpan(reflectionSpan.id, {
+                status: 'success',
+                output: `revise plan: ${feedback.slice(0, 200)}`,
+              });
+            }
+
+            this.trace?.addDecision({
+              id: generateId(),
+              type: 'rewrite',
+              reasoning: feedback,
+              chosen: `revise plan (revision ${revisionCount + 1})`,
+              timestamp: new Date(),
+            });
+
             plan = await planner.revisePlan(plan, feedback);
             plan.status = 'executing';
             revisionCount++;
             planRevised = true;
             break; // Break inner for-loop to restart with revised plan
+          }
+
+          if (reflectionSpan) {
+            this.trace!.endSpan(reflectionSpan.id, {
+              status: 'success',
+              output: 'no revision needed',
+            });
           }
         }
       }
@@ -318,6 +525,11 @@ export class AgentLoop {
     return this.totalTokens;
   }
 
+  /** Get the trace tree if tracing is enabled, otherwise undefined. */
+  getTrace(): TraceTree | undefined {
+    return this.trace?.getTrace();
+  }
+
   // ---------------------------------------------------------------------------
   // Event publishing
   // ---------------------------------------------------------------------------
@@ -386,6 +598,27 @@ export class AgentLoop {
         stepId: step.id,
         status: step.status,
         output: step.output,
+      },
+      correlationId: this.runtime.workflowRunId,
+    };
+    await this.eventBus.publish(event);
+  }
+
+  private async publishTrace(trace: TraceTree): Promise<void> {
+    const event: DomainEvent = {
+      eventId: generateId(),
+      type: 'agent.trace.completed',
+      source: { kind: 'agent', id: this.runtime.instanceId },
+      timestamp: new Date(),
+      payload: {
+        agentId: trace.agentId,
+        workflowRunId: trace.workflowRunId,
+        goal: trace.goal,
+        totalDurationMs: trace.totalDurationMs,
+        totalTokens: trace.totalTokens,
+        totalToolCalls: trace.totalToolCalls,
+        decisions: trace.decisions.length,
+        spans: trace.rootSpans.length,
       },
       correlationId: this.runtime.workflowRunId,
     };
