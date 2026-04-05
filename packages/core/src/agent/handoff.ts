@@ -52,9 +52,16 @@ export class HandoffManager {
     allowedTargets: string[],
   ): void {
     const handler: ToolHandler = async (args: Record<string, unknown>) => {
-      const toAgentId = args.toAgentId as string;
-      const reason = (args.reason as string) ?? '';
-      const context = (args.context as string) ?? '';
+      const toAgentId = typeof args.toAgentId === 'string' ? args.toAgentId : '';
+      const reason = typeof args.reason === 'string' ? args.reason : '';
+      const context = typeof args.context === 'string' ? args.context : '';
+
+      if (!toAgentId) {
+        return {
+          accepted: false,
+          error: 'Missing required argument: toAgentId (string)',
+        } satisfies HandoffResult;
+      }
       const workflowRunId = agentRuntime.workflowRunId;
       const fromAgentId = agentRuntime.definition.id;
 
@@ -144,10 +151,7 @@ export class HandoffManager {
       }
     };
 
-    // Register the tool on the runtime's tool map via the runtime constructor approach.
-    // AgentRuntime exposes tools as a Map in the constructor options. We access it
-    // through the public-facing registration pattern used throughout the codebase.
-    (agentRuntime as unknown as { tools: Map<string, ToolHandler> }).tools.set('handoff', handler);
+    agentRuntime.getTools().set('handoff', handler);
 
     logger.info(
       `Registered handoff tool on agent ${agentRuntime.definition.id} ` +

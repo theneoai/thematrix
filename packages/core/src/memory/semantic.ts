@@ -62,6 +62,18 @@ export class SemanticMemory {
     collection: string,
     documents: Array<{ content: string; metadata?: Record<string, unknown> }>
   ): Promise<string[]> {
+    const BATCH_SIZE = 100;
+    if (documents.length > BATCH_SIZE) {
+      // Process in batches to avoid overwhelming embedding API
+      const allIds: string[] = [];
+      for (let i = 0; i < documents.length; i += BATCH_SIZE) {
+        const batch = documents.slice(i, i + BATCH_SIZE);
+        const batchIds = await this.storeMany(collection, batch);
+        allIds.push(...batchIds);
+      }
+      return allIds;
+    }
+
     const texts = documents.map(d => d.content);
     const embeddings = await this.embeddingProvider.embed(texts);
     const ids: string[] = [];

@@ -52,7 +52,7 @@ export class EnvironmentManager {
     return this.environments.get(this.active);
   }
 
-  /** Resolve a provider config with environment overrides applied */
+  /** Resolve a provider config with environment overrides applied (deep merge) */
   resolveProviderConfig(baseConfig: ProviderConfig): ProviderConfig {
     const envConfig = this.environments.get(this.active);
     if (!envConfig?.providers) return baseConfig;
@@ -60,7 +60,14 @@ export class EnvironmentManager {
     const override = envConfig.providers[baseConfig.provider];
     if (!override) return baseConfig;
 
-    return { ...baseConfig, ...override };
+    // Deep merge to preserve nested properties
+    const result = { ...baseConfig };
+    for (const [key, value] of Object.entries(override)) {
+      if (value !== undefined) {
+        (result as Record<string, unknown>)[key] = value;
+      }
+    }
+    return result;
   }
 
   /** Resolve execution backend for current environment */

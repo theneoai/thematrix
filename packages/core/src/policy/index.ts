@@ -195,8 +195,14 @@ export class PolicyEngine implements IPolicyEngine {
     if (match) {
       const fieldValue = String(context[match[1]] ?? '');
       if (fieldValue.length > 10_000) return false;
+      const regexStr = match[2];
+      // Guard against excessively complex regex patterns
+      if (regexStr.length > 200) {
+        logger.warn(`Regex pattern too long (${regexStr.length} chars), rejecting`);
+        return false;
+      }
       try {
-        return new RegExp(match[2]).test(fieldValue);
+        return new RegExp(regexStr).test(fieldValue);
       } catch {
         return false;
       }

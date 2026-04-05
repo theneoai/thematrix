@@ -52,33 +52,46 @@ export class EvalRunner {
     const results: EvalResult[] = [];
     const cases = [...suite.cases];
 
-    // Process cases with concurrency control
-    const executing: Promise<void>[] = [];
-
-    for (const evalCase of cases) {
-      const p = this.runSingle(evalCase, suite.metrics).then((result) => {
+    if (this.concurrency <= 1) {
+      // Sequential execution
+      for (const evalCase of cases) {
+        const result = await this.runSingle(evalCase, suite.metrics);
         results.push(result);
-      });
-
-      executing.push(p);
-
-      if (executing.length >= this.concurrency) {
-        await Promise.race(executing);
-        // Remove resolved promises
-        for (let i = executing.length - 1; i >= 0; i--) {
-          const settled = await Promise.race([
-            executing[i].then(() => true),
-            Promise.resolve(false),
-          ]);
-          if (settled) {
-            executing.splice(i, 1);
-          }
-        }
       }
-    }
+    } else {
+      // Concurrent execution with proper semaphore pattern
+      let inFlight = 0;
+      let resolveSlot: (() => void) | null = null;
 
-    // Wait for remaining
-    await Promise.all(executing);
+      const waitForSlot = (): Promise<void> => {
+        if (inFlight < this.concurrency) return Promise.resolve();
+        return new Promise<void>((resolve) => { resolveSlot = resolve; });
+      };
+
+      const releaseSlot = (): void => {
+        inFlight--;
+        if (resolveSlot) {
+          const fn = resolveSlot;
+          resolveSlot = null;
+          fn();
+        }
+      };
+
+      const promises: Promise<void>[] = [];
+
+      for (const evalCase of cases) {
+        await waitForSlot();
+        inFlight++;
+
+        const p = this.runSingle(evalCase, suite.metrics)
+          .then((result) => { results.push(result); })
+          .finally(() => { releaseSlot(); });
+
+        promises.push(p);
+      }
+
+      await Promise.all(promises);
+    }
 
     logger.info(`Eval suite "${suite.name}" complete: ${results.length} results`);
     return results;

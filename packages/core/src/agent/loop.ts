@@ -32,17 +32,7 @@ export class AgentLoop {
   constructor(runtime: AgentRuntime, config: AgentLoopConfig) {
     this.runtime = runtime;
     this.config = config;
-    // Access eventBus via the runtime's public interface -- runtime publishes
-    // events itself, but loop-level events need direct access. We extract it
-    // from the runtime options stashed at construction time. Because
-    // AgentRuntime doesn't expose eventBus publicly we keep a parallel ref
-    // passed through the same options bag.  For safety we also accept it from
-    // the runtime's definition metadata if needed.
-    //
-    // NOTE: we read it via (runtime as any) to avoid modifying runtime.ts.
-    // This is intentional -- the loop is a privileged wrapper.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    this.eventBus = (runtime as any).eventBus as IEventBus;
+    this.eventBus = runtime.getEventBus();
   }
 
   /**
@@ -87,11 +77,31 @@ export class AgentLoop {
     let lastOutput = '';
     let iteration = 0;
 
+    let consecutiveErrors = 0;
+    const maxConsecutiveErrors = 3;
+
     while (iteration < maxIterations) {
       iteration++;
       logger.info(`Loop iteration ${iteration}/${maxIterations}`);
 
-      lastOutput = await this.runtime.runTurn(currentInput);
+      try {
+        lastOutput = await this.runtime.runTurn(currentInput);
+        consecutiveErrors = 0;
+      } catch (error) {
+        consecutiveErrors++;
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        logger.error(`Loop iteration ${iteration} failed: ${errorMsg}`);
+
+        if (consecutiveErrors >= maxConsecutiveErrors) {
+          logger.error(`${maxConsecutiveErrors} consecutive errors, stopping loop`);
+          lastOutput = `Loop terminated after ${maxConsecutiveErrors} consecutive errors. Last error: ${errorMsg}`;
+          break;
+        }
+        // Retry with error feedback
+        currentInput = `Previous attempt failed with error: ${errorMsg}\nPlease try a different approach.`;
+        continue;
+      }
+
       this.totalTokens = this.runtime.getMetrics().totalTokens;
 
       await this.publishIteration(iteration, lastOutput);
@@ -147,13 +157,11 @@ export class AgentLoop {
   private async runPlanAndExecute(input: string): Promise<string> {
     const maxIterations = this.config.maxIterations ?? DEFAULT_MAX_ITERATIONS;
     const maxTokens = this.config.maxTotalTokens ?? DEFAULT_MAX_TOTAL_TOKENS;
+    const maxRevisions = 3;
 
     // 1. Create plan
     const planner = this.createPlanner();
-    const availableTools = Array.from(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ((this.runtime as any).tools as Map<string, unknown>).keys(),
-    );
+    const availableTools = Array.from(this.runtime.getTools().keys());
     const availableAgents = this.config.handoffTargets ?? [];
 
     let plan = await planner.createPlan(input, availableTools, availableAgents);
@@ -161,71 +169,77 @@ export class AgentLoop {
 
     const outputs: string[] = [];
     let iteration = 0;
+    let revisionCount = 0;
 
-    // 2. Execute each step
-    for (const step of plan.steps) {
-      if (step.status === 'completed' || step.status === 'skipped') continue;
+    // Outer loop to handle plan revisions
+    let planRevised = true;
+    while (planRevised) {
+      planRevised = false;
 
-      // Check dependencies
-      if (step.dependsOn && step.dependsOn.length > 0) {
-        const allDepsCompleted = step.dependsOn.every(depId => {
-          const dep = plan.steps.find(s => s.id === depId);
-          return dep && dep.status === 'completed';
-        });
-        if (!allDepsCompleted) {
-          logger.warn(`Skipping step ${step.id}: dependencies not met`);
-          step.status = 'skipped';
-          continue;
+      // 2. Execute each pending step
+      for (const step of plan.steps) {
+        if (step.status === 'completed' || step.status === 'skipped') continue;
+
+        // Check dependencies
+        if (step.dependsOn && step.dependsOn.length > 0) {
+          const allDepsCompleted = step.dependsOn.every(depId => {
+            const dep = plan.steps.find(s => s.id === depId);
+            return dep && dep.status === 'completed';
+          });
+          if (!allDepsCompleted) {
+            logger.warn(`Skipping step ${step.id}: dependencies not met`);
+            step.status = 'skipped';
+            continue;
+          }
         }
-      }
 
-      iteration++;
-      if (iteration > maxIterations) {
-        logger.warn('Max iterations reached during plan execution');
-        break;
-      }
-      if (this.totalTokens >= maxTokens) {
-        logger.warn('Token budget exhausted during plan execution');
-        break;
-      }
-
-      step.status = 'running';
-      await this.publishPlanStepStarted(plan, step);
-
-      try {
-        const stepInput = this.buildStepInput(input, step, outputs);
-        const stepOutput = await this.runtime.runTurn(stepInput);
-        this.totalTokens = this.runtime.getMetrics().totalTokens;
-
-        step.status = 'completed';
-        step.output = stepOutput;
-        outputs.push(stepOutput);
-
-        await this.publishPlanStepCompleted(plan, step);
-        await this.publishIteration(iteration, stepOutput);
-      } catch (error) {
-        step.status = 'failed';
-        step.output = error instanceof Error ? error.message : String(error);
-        logger.error(`Step ${step.id} failed: ${step.output}`);
-
-        await this.publishPlanStepCompleted(plan, step);
-      }
-
-      // 3. Reflect after each step (if enabled)
-      if (this.config.enableReflection && step.status === 'completed') {
-        const reflector = this.createReflector();
-        const history = outputs.slice();
-        const reflection = await reflector.reflect(input, String(step.output), history);
-
-        if (reflection.shouldRevise) {
-          logger.info('Reflection suggests plan revision');
-          const feedback = reflection.suggestion || reflection.issues.join('; ');
-          plan = await planner.revisePlan(plan, feedback);
-          plan.status = 'executing';
-          // After revision we continue with the new plan's remaining pending steps
-          // by breaking out and re-iterating. For simplicity we break and re-enter
-          // the remaining steps.
+        iteration++;
+        if (iteration > maxIterations) {
+          logger.warn('Max iterations reached during plan execution');
           break;
+        }
+        if (this.totalTokens >= maxTokens) {
+          logger.warn('Token budget exhausted during plan execution');
+          break;
+        }
+
+        step.status = 'running';
+        await this.publishPlanStepStarted(plan, step);
+
+        try {
+          const stepInput = this.buildStepInput(input, step, outputs);
+          const stepOutput = await this.runtime.runTurn(stepInput);
+          this.totalTokens = this.runtime.getMetrics().totalTokens;
+
+          step.status = 'completed';
+          step.output = stepOutput;
+          outputs.push(stepOutput);
+
+          await this.publishPlanStepCompleted(plan, step);
+          await this.publishIteration(iteration, stepOutput);
+        } catch (error) {
+          step.status = 'failed';
+          step.output = error instanceof Error ? error.message : String(error);
+          logger.error(`Step ${step.id} failed: ${step.output}`);
+
+          await this.publishPlanStepCompleted(plan, step);
+        }
+
+        // 3. Reflect after each step (if enabled)
+        if (this.config.enableReflection && step.status === 'completed') {
+          const reflector = this.createReflector();
+          const history = outputs.slice();
+          const reflection = await reflector.reflect(input, String(step.output), history);
+
+          if (reflection.shouldRevise && revisionCount < maxRevisions) {
+            logger.info(`Reflection suggests plan revision (${revisionCount + 1}/${maxRevisions})`);
+            const feedback = reflection.suggestion || reflection.issues.join('; ');
+            plan = await planner.revisePlan(plan, feedback);
+            plan.status = 'executing';
+            revisionCount++;
+            planRevised = true;
+            break; // Break inner for-loop to restart with revised plan
+          }
         }
       }
     }
@@ -269,7 +283,7 @@ export class AgentLoop {
 
   private createPlanner(): AgentPlanner {
     return new AgentPlanner({
-      llmAdapter: (this.runtime as any).llmAdapter, // eslint-disable-line @typescript-eslint/no-explicit-any
+      llmAdapter: this.runtime.getLLMAdapter(),
       eventBus: this.eventBus,
       model: this.runtime.definition.model.model,
       sourceId: this.runtime.instanceId,
@@ -279,7 +293,7 @@ export class AgentLoop {
 
   private createReflector(): AgentReflector {
     return new AgentReflector({
-      llmAdapter: (this.runtime as any).llmAdapter, // eslint-disable-line @typescript-eslint/no-explicit-any
+      llmAdapter: this.runtime.getLLMAdapter(),
       eventBus: this.eventBus,
       model: this.runtime.definition.model.model,
       sourceId: this.runtime.instanceId,
@@ -288,11 +302,10 @@ export class AgentLoop {
   }
 
   private async getHistorySummaries(): Promise<string[]> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const memory = (this.runtime as any).memory as any;
+    const memory = this.runtime.getMemory();
     try {
       const history = await memory.getHistory(this.runtime.instanceId);
-      return history.map((h: any) => `[${h.role}] ${h.content}`); // eslint-disable-line @typescript-eslint/no-explicit-any
+      return history.map((h) => `[${h.role}] ${h.content}`);
     } catch {
       return [];
     }

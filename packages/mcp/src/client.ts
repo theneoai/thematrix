@@ -38,6 +38,8 @@ export class MCPClient implements IMCPClient {
   private connected = false;
   private nextId = 1;
   private pending = new Map<number, PendingRequest>();
+  private static readonly MAX_REQUEST_ID = 2 ** 31 - 1;
+  private static readonly REQUEST_TIMEOUT_MS = 30_000;
 
   // stdio transport state
   private childProcess: ChildProcess | null = null;
@@ -68,12 +70,7 @@ export class MCPClient implements IMCPClient {
     if (!this.connected) return;
 
     this.connected = false;
-
-    // Reject all pending requests
-    for (const [id, pending] of this.pending) {
-      pending.reject(new Error('Client disconnected'));
-      this.pending.delete(id);
-    }
+    this.rejectAllPending(new Error('Client disconnected'));
 
     if (this.rl) {
       this.rl.close();
@@ -120,11 +117,13 @@ export class MCPClient implements IMCPClient {
     this.childProcess.on('error', (error) => {
       logger.error(`Child process error: ${error.message}`);
       this.connected = false;
+      this.rejectAllPending(new Error(`Child process error: ${error.message}`));
     });
 
     this.childProcess.on('exit', (code) => {
       logger.info(`Child process exited with code ${code}`);
       this.connected = false;
+      this.rejectAllPending(new Error(`Child process exited with code ${code}`));
     });
 
     // Pipe stderr to our logger
@@ -184,8 +183,21 @@ export class MCPClient implements IMCPClient {
     logger.info(`Server initialized: ${JSON.stringify(initResult.serverInfo)}`);
   }
 
+  private rejectAllPending(error: Error): void {
+    for (const [id, pending] of this.pending) {
+      pending.reject(error);
+    }
+    this.pending.clear();
+  }
+
+  private getNextId(): number {
+    const id = this.nextId;
+    this.nextId = this.nextId >= MCPClient.MAX_REQUEST_ID ? 1 : this.nextId + 1;
+    return id;
+  }
+
   private sendRequest(method: string, params: Record<string, unknown>): Promise<unknown> {
-    const id = this.nextId++;
+    const id = this.getNextId();
     const request: JsonRpcRequest = {
       jsonrpc: '2.0',
       id,
@@ -200,8 +212,32 @@ export class MCPClient implements IMCPClient {
     }
 
     return new Promise<unknown>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.writeToStdin(request);
+      // Set a timeout for pending requests
+      const timer = setTimeout(() => {
+        if (this.pending.has(id)) {
+          this.pending.delete(id);
+          reject(new Error(`Request ${method} (id: ${id}) timed out after ${MCPClient.REQUEST_TIMEOUT_MS}ms`));
+        }
+      }, MCPClient.REQUEST_TIMEOUT_MS);
+
+      this.pending.set(id, {
+        resolve: (result) => {
+          clearTimeout(timer);
+          resolve(result);
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      });
+
+      try {
+        this.writeToStdin(request);
+      } catch (err) {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        reject(err);
+      }
     });
   }
 

@@ -84,10 +84,29 @@ export class AgentReflector {
       temperature: 0.1,
     });
 
-    const parsed = JSON.parse(response.content);
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(response.content);
+    } catch {
+      logger.error(`Failed to parse reflection JSON: ${response.content.slice(0, 200)}`);
+      // Return a safe default rather than crashing
+      return {
+        quality: 'acceptable',
+        issues: ['Failed to parse reflection output'],
+        suggestion: '',
+        shouldRetry: false,
+        shouldRevise: false,
+      };
+    }
+
+    const qualityValues = ['good', 'acceptable', 'poor'] as const;
+    const rawQuality = String(parsed.quality ?? 'acceptable');
+    const quality = qualityValues.includes(rawQuality as typeof qualityValues[number])
+      ? (rawQuality as ReflectionResult['quality'])
+      : 'acceptable';
 
     const result: ReflectionResult = {
-      quality: parsed.quality ?? 'acceptable',
+      quality,
       issues: Array.isArray(parsed.issues) ? parsed.issues.map(String) : [],
       suggestion: String(parsed.suggestion ?? ''),
       shouldRetry: Boolean(parsed.shouldRetry),

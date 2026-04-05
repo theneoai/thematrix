@@ -71,6 +71,15 @@ export class MCPServer implements IMCPServer {
           if (response) {
             this.sendResponse(response);
           }
+        }).catch((err) => {
+          logger.error(`Unhandled error processing request: ${err instanceof Error ? err.message : String(err)}`);
+          if (request.id !== undefined) {
+            this.sendResponse({
+              jsonrpc: '2.0',
+              id: request.id ?? null,
+              error: { code: -32603, message: 'Internal error' },
+            });
+          }
         });
       } catch {
         this.sendResponse({
@@ -175,8 +184,17 @@ export class MCPServer implements IMCPServer {
     id: string | number,
     params: Record<string, unknown>,
   ): Promise<JsonRpcResponse> {
-    const toolName = params.name as string;
-    const toolArgs = (params.arguments as Record<string, unknown>) ?? {};
+    const toolName = typeof params.name === 'string' ? params.name : '';
+    if (!toolName) {
+      return {
+        jsonrpc: '2.0',
+        id,
+        error: { code: -32602, message: 'Missing required parameter: name' },
+      };
+    }
+    const toolArgs = (typeof params.arguments === 'object' && params.arguments !== null
+      ? params.arguments as Record<string, unknown>
+      : {});
 
     const entry = this.tools.get(toolName);
     if (!entry) {

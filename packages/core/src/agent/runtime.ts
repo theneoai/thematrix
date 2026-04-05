@@ -415,6 +415,26 @@ export class AgentRuntime {
     return { ...this.metrics };
   }
 
+  /** Expose eventBus for privileged wrappers (AgentLoop, HandoffManager) */
+  getEventBus(): IEventBus {
+    return this.eventBus;
+  }
+
+  /** Expose LLM adapter for privileged wrappers (AgentPlanner, AgentReflector) */
+  getLLMAdapter(): LLMAdapter {
+    return this.llmAdapter;
+  }
+
+  /** Expose memory manager for privileged wrappers */
+  getMemory(): IMemoryManager {
+    return this.memory;
+  }
+
+  /** Expose tools map for privileged wrappers (HandoffManager) */
+  getTools(): Map<string, ToolHandler> {
+    return this.tools;
+  }
+
   getInstance(): AgentInstance {
     return {
       instanceId: this.instanceId,

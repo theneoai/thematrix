@@ -251,14 +251,28 @@ export class MemoryManager implements IMemoryManager {
     const stmt = this.db.prepare(sql);
     const rows = stmt.all(...params) as ConversationRow[];
     
-    return rows.map(row => ({
-      turnId: row.turn_id,
-      role: row.role as ConversationTurn['role'],
-      content: row.content,
-      toolCalls: row.tool_calls ? JSON.parse(row.tool_calls) : undefined,
-      toolResults: row.tool_results ? JSON.parse(row.tool_results) : undefined,
-      timestamp: new Date(row.timestamp),
-    }));
+    return rows.map(row => {
+      let toolCalls;
+      let toolResults;
+      try {
+        toolCalls = row.tool_calls ? JSON.parse(row.tool_calls) : undefined;
+      } catch {
+        logger.warn(`Failed to parse toolCalls for turn ${row.turn_id}`);
+      }
+      try {
+        toolResults = row.tool_results ? JSON.parse(row.tool_results) : undefined;
+      } catch {
+        logger.warn(`Failed to parse toolResults for turn ${row.turn_id}`);
+      }
+      return {
+        turnId: row.turn_id,
+        role: row.role as ConversationTurn['role'],
+        content: row.content,
+        toolCalls,
+        toolResults,
+        timestamp: new Date(row.timestamp),
+      };
+    });
   }
 
   async clearHistory(agentInstanceId: string): Promise<void> {

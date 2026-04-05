@@ -192,16 +192,24 @@ export class ApprovalManager implements IApprovalManager {
       requestedAt: approval.requestedAt.toISOString(),
     });
 
-    const response = await fetch(approval.callbackUrl!, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10_000);
 
-    if (!response.ok) {
-      logger.warn(
-        `Approval callback to ${approval.callbackUrl} returned ${response.status}`,
-      );
+    try {
+      const response = await fetch(approval.callbackUrl!, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        logger.warn(
+          `Approval callback to ${approval.callbackUrl} returned ${response.status}`,
+        );
+      }
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 

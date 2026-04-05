@@ -118,7 +118,19 @@ export class APIEmbeddingProvider implements IEmbeddingProvider {
 
     // Sort by index to ensure correct ordering
     const sorted = json.data.sort((a, b) => a.index - b.index);
-    return sorted.map(item => item.embedding);
+    const embeddings = sorted.map(item => item.embedding);
+
+    // Validate dimension of returned embeddings
+    for (const emb of embeddings) {
+      if (emb.length !== this.dimension) {
+        throw new Error(
+          `Embedding dimension mismatch: expected ${this.dimension}, got ${emb.length}. ` +
+          `Check model "${this.model}" configuration.`
+        );
+      }
+    }
+
+    return embeddings;
   }
 }
 

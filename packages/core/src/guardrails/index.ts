@@ -18,11 +18,11 @@ const logger = new Logger({ prefix: 'GuardrailRunner' });
 
 /** Harmful/toxic content keyword blocklist */
 const CONTENT_SAFETY_PATTERNS: RegExp[] = [
-  /\b(kill|murder|assassinate)\s+(yourself|himself|herself|themselves|someone|people)\b/i,
-  /\b(how\s+to\s+(make|build|create)\s+(a\s+)?(bomb|explosive|weapon))\b/i,
-  /\b(self[- ]?harm|suicide\s+method)\b/i,
-  /\b(child\s+(porn|exploitation|abuse))\b/i,
-  /\b(hate\s+speech|racial\s+slur)\b/i,
+  /\b(kill|murder|assassinate)\s+(yourself|himself|herself|themselves|someone|people)\b/gi,
+  /\b(how\s+to\s+(make|build|create)\s+(a\s+)?(bomb|explosive|weapon))\b/gi,
+  /\b(self[- ]?harm|suicide\s+method)\b/gi,
+  /\b(child\s+(porn|exploitation|abuse))\b/gi,
+  /\b(hate\s+speech|racial\s+slur)\b/gi,
 ];
 
 /** PII detection patterns */
@@ -35,16 +35,16 @@ const PII_PATTERNS: { name: string; pattern: RegExp }[] = [
 
 /** Prompt injection patterns */
 const PROMPT_INJECTION_PATTERNS: RegExp[] = [
-  /ignore\s+(all\s+)?previous\s+instructions/i,
-  /ignore\s+(all\s+)?above\s+instructions/i,
-  /disregard\s+(all\s+)?previous/i,
-  /\bsystem\s*:/i,
-  /you\s+are\s+now\s+/i,
-  /\bact\s+as\s+(if|though)\s+/i,
-  /\bpretend\s+(you\s+are|to\s+be)\s+/i,
-  /\bdo\s+anything\s+now\b/i,
-  /\bjailbreak\b/i,
-  /\bDAN\s+mode\b/i,
+  /ignore\s+(all\s+)?previous\s+instructions/gi,
+  /ignore\s+(all\s+)?above\s+instructions/gi,
+  /disregard\s+(all\s+)?previous/gi,
+  /\bsystem\s*:/gi,
+  /you\s+are\s+now\s+/gi,
+  /\bact\s+as\s+(if|though)\s+/gi,
+  /\bpretend\s+(you\s+are|to\s+be)\s+/gi,
+  /\bdo\s+anything\s+now\b/gi,
+  /\bjailbreak\b/gi,
+  /\bDAN\s+mode\b/gi,
 ];
 
 export interface GuardrailRunResult {
@@ -237,8 +237,9 @@ export class GuardrailRunner {
     const violations: GuardrailViolation[] = [];
 
     for (const pattern of CONTENT_SAFETY_PATTERNS) {
-      const match = pattern.exec(content);
-      if (match) {
+      pattern.lastIndex = 0;
+      let match: RegExpExecArray | null;
+      while ((match = pattern.exec(content)) !== null) {
         violations.push({
           type: 'content-safety',
           severity: 'critical',
@@ -322,8 +323,9 @@ export class GuardrailRunner {
     const violations: GuardrailViolation[] = [];
 
     for (const pattern of PROMPT_INJECTION_PATTERNS) {
-      const match = pattern.exec(content);
-      if (match) {
+      pattern.lastIndex = 0;
+      let match: RegExpExecArray | null;
+      while ((match = pattern.exec(content)) !== null) {
         violations.push({
           type: 'prompt-injection',
           severity: 'critical',
@@ -380,10 +382,31 @@ export class GuardrailRunner {
         maxTokens: 512,
       });
 
-      const parsed = JSON.parse(response.content) as {
+      let parsed: {
         passed: boolean;
         violations?: { message: string; severity: 'low' | 'medium' | 'high' | 'critical' }[];
       };
+      try {
+        parsed = JSON.parse(response.content);
+      } catch {
+        logger.warn(`Custom guardrail "${guardrail.name}" returned invalid JSON, failing open`);
+        return {
+          guardrailId: guardrail.id,
+          passed: true,
+          action: guardrail.action,
+          violations: [],
+        };
+      }
+
+      if (typeof parsed.passed !== 'boolean') {
+        logger.warn(`Custom guardrail "${guardrail.name}" response missing 'passed' field, failing open`);
+        return {
+          guardrailId: guardrail.id,
+          passed: true,
+          action: guardrail.action,
+          violations: [],
+        };
+      }
 
       const violations: GuardrailViolation[] = (parsed.violations ?? []).map(v => ({
         type: 'custom',
@@ -467,8 +490,10 @@ export class GuardrailRunner {
       source: { kind: 'system', id: 'guardrail-runner' },
       timestamp: new Date(),
       payload,
-      correlationId: generateId(),
+      correlationId: '',
     };
-    await this.eventBus.publish(event);
+    await this.eventBus.publish(event).catch(err => {
+      logger.error('Failed to publish guardrail event:', err);
+    });
   }
 }

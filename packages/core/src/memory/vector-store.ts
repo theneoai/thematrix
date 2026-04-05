@@ -35,6 +35,9 @@ export class InMemoryVectorStore implements IVectorStore {
   async upsert(collectionName: string, documents: VectorDocument[]): Promise<void> {
     const collection = this.getCollection(collectionName);
     for (const doc of documents) {
+      if (!doc.embedding || doc.embedding.length === 0) {
+        throw new Error(`Document "${doc.id}" has an empty embedding vector`);
+      }
       if (doc.embedding.length !== collection.dimension) {
         throw new Error(
           `Embedding dimension mismatch: expected ${collection.dimension}, got ${doc.embedding.length}`
@@ -51,6 +54,13 @@ export class InMemoryVectorStore implements IVectorStore {
     topK: number = 5,
     filter?: VectorFilter
   ): Promise<VectorSearchResult[]> {
+    if (topK < 1) {
+      throw new Error(`topK must be at least 1, got ${topK}`);
+    }
+    if (!queryVector || queryVector.length === 0) {
+      throw new Error('Query vector must not be empty');
+    }
+
     const collection = this.getCollection(collectionName);
 
     if (queryVector.length !== collection.dimension) {

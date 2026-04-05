@@ -94,6 +94,20 @@ export class WorkflowEngine {
     definition: WorkflowDefinition,
     input: Record<string, unknown>
   ): Promise<WorkflowRun> {
+    // Validate input against schema if defined
+    if (definition.inputSchema) {
+      const required = (definition.inputSchema as Record<string, unknown>)['required'];
+      if (Array.isArray(required)) {
+        const missing = required.filter((key: string) => !(key in input));
+        if (missing.length > 0) {
+          throw new WorkflowError(
+            `Missing required workflow input fields: ${missing.join(', ')}`,
+            definition.id,
+          );
+        }
+      }
+    }
+
     // 检查并发限制
     if (this.activeWorkflowCount >= this.maxConcurrentWorkflows) {
       throw new WorkflowError(
@@ -655,7 +669,7 @@ export class WorkflowEngine {
   }
 
   private async createAgentRuntime(
-    definition: AgentDefinition, 
+    definition: AgentDefinition,
     workflowRunId: string
   ): Promise<AgentRuntime> {
     const llmAdapter = this.llmAdapterFactory({
@@ -669,6 +683,9 @@ export class WorkflowEngine {
       llmAdapter,
       memory: this.memory,
       eventBus: this.eventBus,
+      // Pass through agent-level guardrails and outputSchema from the definition
+      guardrails: definition.guardrails,
+      outputSchema: definition.outputSchema,
     });
 
     await runtime.initialize();

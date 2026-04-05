@@ -102,8 +102,15 @@ export class AgentPlanner {
       temperature: 0.2,
     });
 
-    const parsed = JSON.parse(response.content);
-    const steps: PlanStep[] = (parsed.steps ?? []).map((s: Record<string, unknown>) => ({
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(response.content);
+    } catch {
+      logger.error(`Failed to parse plan JSON: ${response.content.slice(0, 200)}`);
+      throw new Error('Planner returned invalid JSON');
+    }
+
+    const steps: PlanStep[] = (Array.isArray(parsed.steps) ? parsed.steps : []).map((s: Record<string, unknown>) => ({
       id: String(s.id ?? generateId()),
       description: String(s.description ?? ''),
       agentId: s.agentId ? String(s.agentId) : undefined,
@@ -150,8 +157,15 @@ export class AgentPlanner {
       temperature: 0.2,
     });
 
-    const parsed = JSON.parse(response.content);
-    const steps: PlanStep[] = (parsed.steps ?? []).map((s: Record<string, unknown>) => ({
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(response.content);
+    } catch {
+      logger.error(`Failed to parse revised plan JSON: ${response.content.slice(0, 200)}`);
+      throw new Error('Planner returned invalid JSON during revision');
+    }
+
+    const steps: PlanStep[] = (Array.isArray(parsed.steps) ? parsed.steps : []).map((s: Record<string, unknown>) => ({
       id: String(s.id ?? generateId()),
       description: String(s.description ?? ''),
       agentId: s.agentId ? String(s.agentId) : undefined,

@@ -27,8 +27,8 @@ export class OutputValidator {
       return { valid: false, errors };
     }
 
-    // Step 2: validate against schema
-    this.validateValue(parsed, schema, '', errors);
+    // Step 2: validate against schema (with depth limit to prevent stack overflow)
+    this.validateValue(parsed, schema, '', errors, 0);
 
     const valid = errors.length === 0;
     if (!valid) {
@@ -37,12 +37,19 @@ export class OutputValidator {
     return { valid, errors };
   }
 
+  private static readonly MAX_DEPTH = 20;
+
   private validateValue(
     value: unknown,
     schema: Record<string, unknown>,
     path: string,
     errors: string[],
+    depth: number,
   ): void {
+    if (depth > OutputValidator.MAX_DEPTH) {
+      errors.push(`${path || '(root)'}: schema validation exceeded maximum depth of ${OutputValidator.MAX_DEPTH}`);
+      return;
+    }
     const expectedType = schema['type'] as string | undefined;
 
     if (expectedType) {
@@ -77,7 +84,7 @@ export class OutputValidator {
         const obj = value as Record<string, unknown>;
         for (const [key, propSchema] of Object.entries(properties)) {
           if (key in obj) {
-            this.validateValue(obj[key], propSchema, path ? `${path}.${key}` : key, errors);
+            this.validateValue(obj[key], propSchema, path ? `${path}.${key}` : key, errors, depth + 1);
           }
         }
       }
@@ -88,7 +95,7 @@ export class OutputValidator {
       const items = schema['items'] as Record<string, unknown> | undefined;
       if (items) {
         for (let i = 0; i < value.length; i++) {
-          this.validateValue(value[i], items, `${path || '(root)'}[${i}]`, errors);
+          this.validateValue(value[i], items, `${path || '(root)'}[${i}]`, errors, depth + 1);
         }
       }
     }
