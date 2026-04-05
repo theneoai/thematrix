@@ -44,6 +44,7 @@ export class MCPClient implements IMCPClient {
   // stdio transport state
   private childProcess: ChildProcess | null = null;
   private rl: readline.Interface | null = null;
+  private stderrRl: readline.Interface | null = null;
 
   constructor(config: MCPClientConfig) {
     this.config = config;
@@ -71,6 +72,11 @@ export class MCPClient implements IMCPClient {
 
     this.connected = false;
     this.rejectAllPending(new Error('Client disconnected'));
+
+    if (this.stderrRl) {
+      this.stderrRl.close();
+      this.stderrRl = null;
+    }
 
     if (this.rl) {
       this.rl.close();
@@ -128,8 +134,8 @@ export class MCPClient implements IMCPClient {
 
     // Pipe stderr to our logger
     if (this.childProcess.stderr) {
-      const stderrRl = readline.createInterface({ input: this.childProcess.stderr });
-      stderrRl.on('line', (line: string) => {
+      this.stderrRl = readline.createInterface({ input: this.childProcess.stderr });
+      this.stderrRl.on('line', (line: string) => {
         logger.warn(`[server stderr] ${line}`);
       });
     }
@@ -300,27 +306,35 @@ export class MCPClient implements IMCPClient {
       throw new Error('Expected HTTP transport');
     }
 
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      ...transport.headers,
-    };
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), MCPClient.REQUEST_TIMEOUT_MS);
 
-    const response = await fetch(transport.url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(request),
-    });
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...transport.headers,
+      };
 
-    if (!response.ok) {
-      throw new Error(`HTTP error ${response.status}: ${response.statusText}`);
+      const response = await fetch(transport.url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(request),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error ${response.status}: ${response.statusText}`);
+      }
+
+      const json = (await response.json()) as JsonRpcResponse;
+
+      if (json.error) {
+        throw new Error(`JSON-RPC error ${json.error.code}: ${json.error.message}`);
+      }
+
+      return json.result;
+    } finally {
+      clearTimeout(timeoutId);
     }
-
-    const json = (await response.json()) as JsonRpcResponse;
-
-    if (json.error) {
-      throw new Error(`JSON-RPC error ${json.error.code}: ${json.error.message}`);
-    }
-
-    return json.result;
   }
 }

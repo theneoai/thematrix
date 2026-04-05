@@ -26,10 +26,15 @@ export class EnvironmentManager {
   private active: EnvironmentName;
 
   constructor(options: EnvironmentManagerOptions) {
-    this.active = options.activeEnvironment;
     for (const env of options.environments) {
       this.environments.set(env.name, env);
     }
+    if (!this.environments.has(options.activeEnvironment)) {
+      throw new Error(
+        `Active environment "${options.activeEnvironment}" not found in configured environments: [${Array.from(this.environments.keys()).join(', ')}]`
+      );
+    }
+    this.active = options.activeEnvironment;
     logger.info(`Active environment: ${this.active} (${this.environments.size} environments configured)`);
   }
 

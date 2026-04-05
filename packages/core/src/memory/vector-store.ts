@@ -107,6 +107,10 @@ export class InMemoryVectorStore implements IVectorStore {
 }
 
 function cosineSimilarity(a: number[], b: number[]): number {
+  if (a.length !== b.length) {
+    throw new Error(`Vector length mismatch in cosine similarity: ${a.length} vs ${b.length}`);
+  }
+
   let dotProduct = 0;
   let normA = 0;
   let normB = 0;
@@ -133,7 +137,7 @@ function matchesFilter(metadata: Record<string, unknown>, filter: VectorFilter):
 
     if (Array.isArray(value)) {
       // Array filter: metadata value must be one of the specified values
-      if (!value.includes(metaValue as string)) {
+      if (!value.some(v => v === metaValue)) {
         return false;
       }
     } else {

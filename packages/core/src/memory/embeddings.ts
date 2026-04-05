@@ -116,8 +116,25 @@ export class APIEmbeddingProvider implements IEmbeddingProvider {
 
     const json = await response.json() as EmbeddingAPIResponse;
 
+    // Validate response count matches input
+    if (json.data.length !== texts.length) {
+      throw new Error(
+        `Embedding API returned ${json.data.length} embeddings for ${texts.length} inputs`
+      );
+    }
+
     // Sort by index to ensure correct ordering
     const sorted = json.data.sort((a, b) => a.index - b.index);
+
+    // Validate indices are sequential 0..n-1
+    for (let i = 0; i < sorted.length; i++) {
+      if (sorted[i].index !== i) {
+        throw new Error(
+          `Embedding API returned non-sequential indices: expected ${i}, got ${sorted[i].index}`
+        );
+      }
+    }
+
     const embeddings = sorted.map(item => item.embedding);
 
     // Validate dimension of returned embeddings

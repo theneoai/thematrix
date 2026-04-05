@@ -170,7 +170,9 @@ export class AgentPlanner {
       description: String(s.description ?? ''),
       agentId: s.agentId ? String(s.agentId) : undefined,
       toolName: s.toolName ? String(s.toolName) : undefined,
-      status: (s.status as PlanStep['status']) ?? 'pending',
+      status: (['pending', 'completed', 'skipped', 'running', 'failed'] as const).includes(s.status as PlanStep['status'])
+        ? (s.status as PlanStep['status'])
+        : 'pending',
       dependsOn: Array.isArray(s.dependsOn) ? s.dependsOn.map(String) : undefined,
     }));
 

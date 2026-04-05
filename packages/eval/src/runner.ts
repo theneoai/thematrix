@@ -60,8 +60,10 @@ export class EvalRunner {
       }
     } else {
       // Concurrent execution with queued semaphore pattern
+      // Use indexed array to preserve result ordering
       let inFlight = 0;
       const waitQueue: Array<() => void> = [];
+      const indexedResults = new Array<EvalResult>(cases.length);
 
       const waitForSlot = (): Promise<void> => {
         if (inFlight < this.concurrency) return Promise.resolve();
@@ -76,18 +78,21 @@ export class EvalRunner {
 
       const promises: Promise<void>[] = [];
 
-      for (const evalCase of cases) {
+      for (let i = 0; i < cases.length; i++) {
+        const evalCase = cases[i];
+        const idx = i;
         await waitForSlot();
         inFlight++;
 
         const p = this.runSingle(evalCase, suite.metrics)
-          .then((result) => { results.push(result); })
+          .then((result) => { indexedResults[idx] = result; })
           .finally(() => { releaseSlot(); });
 
         promises.push(p);
       }
 
       await Promise.all(promises);
+      results.push(...indexedResults);
     }
 
     logger.info(`Eval suite "${suite.name}" complete: ${results.length} results`);

@@ -183,8 +183,10 @@ export class WorkflowEngine {
         return this.handleWorkflowError(runId, error);
       })
       .catch(err => {
-        // completeWorkflow or handleWorkflowError itself threw — last-resort log
+        // completeWorkflow or handleWorkflowError itself threw — last-resort cleanup
         logger.error(`Critical: workflow lifecycle handler failed for run ${runId}:`, err);
+        // Ensure activeWorkflowCount is always decremented
+        return this.cleanup(runId).catch(() => {});
       });
 
     return run;
@@ -215,6 +217,18 @@ export class WorkflowEngine {
       dependents.get(edge.from)?.add(edge.to);
     }
 
+    // Validate DAG edges reference existing nodes
+    const nodeIds = new Set(dag.nodes.map(n => n.id));
+    for (const edge of dag.edges) {
+      if (!nodeIds.has(edge.from) || !nodeIds.has(edge.to)) {
+        throw new WorkflowError(
+          `Invalid DAG edge: references non-existent node (from: ${edge.from}, to: ${edge.to})`,
+          definition.id,
+          run.runId,
+        );
+      }
+    }
+
     // 检查是否有循环依赖
     if (this.hasCircularDependency(dag.nodes.map(n => n.id), dependencies)) {
       throw new WorkflowError('Circular dependency detected in DAG', definition.id, run.runId);
@@ -228,26 +242,32 @@ export class WorkflowEngine {
         throw new WorkflowError('Workflow cancelled', definition.id, run.runId);
       }
 
+      // Atomically check-and-claim: prevent concurrent execution of same node
       if (completedNodes.has(node.id) || runningNodes.has(node.id) || failedNodes.has(node.id)) {
         return;
       }
+      // Mark as running FIRST to prevent race with parallel calls
+      runningNodes.add(node.id);
 
       // 检查依赖
       const deps = dependencies.get(node.id) ?? new Set();
       for (const dep of deps) {
         if (failedNodes.has(dep)) {
-          // 依赖节点失败，标记当前节点为失败
+          runningNodes.delete(node.id);
           failedNodes.add(node.id);
           logger.warn(`Node ${node.id} skipped because dependency ${dep} failed`);
           return;
         }
         if (!completedNodes.has(dep)) {
+          runningNodes.delete(node.id);
           return; // 等待依赖
         }
       }
 
-      runningNodes.add(node.id);
-      const stats = this.runStats.get(run.runId)!;
+      const stats = this.runStats.get(run.runId);
+      if (!stats) {
+        throw new WorkflowError(`Run stats not found for ${run.runId}`, definition.id, run.runId);
+      }
       const nodeStats: NodeExecutionStats = {
         startedAt: new Date(),
         retryCount: 0,
@@ -344,15 +364,15 @@ export class WorkflowEngine {
     const retryDelayMs = node.retry?.retryDelayMs ?? 1000;
     
     let lastError: Error | undefined;
-    const stats = this.runStats.get(run.runId)!;
-    const nodeStats = stats.nodeExecutions.get(node.id)!;
+    const stats = this.runStats.get(run.runId);
+    const nodeStats = stats?.nodeExecutions.get(node.id);
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         return await this.executeNode(definition, node, run);
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
-        nodeStats.retryCount = attempt + 1;
+        if (nodeStats) nodeStats.retryCount = attempt + 1;
 
         if (attempt === maxRetries) {
           break;
@@ -735,6 +755,10 @@ export class WorkflowEngine {
       // Navigate remaining path segments into the output object
       for (let i = 1; i < parts.length; i++) {
         if (value === null || value === undefined) break;
+        if (typeof value !== 'object') {
+          logger.warn(`Cannot navigate path ${path}: encountered non-object at ${parts.slice(0, i + 1).join('.')}`);
+          return undefined;
+        }
         value = (value as Record<string, unknown>)[parts[i]];
       }
       return value;

@@ -122,9 +122,9 @@ export class AgentRuntime {
         }
       }
 
-      // Add user message to history
+      // Add user message to history (reuse event turnId for correlation)
       await this.memory.appendTurn(this.instanceId, {
-        turnId: generateId(),
+        turnId,
         role: 'user',
         content: effectiveInput,
         timestamp: new Date(),
@@ -182,8 +182,15 @@ export class AgentRuntime {
       // Agentic tool-use loop: execute tool calls and feed results back to LLM
       let finalContent = response.content;
       let currentResponse = response;
+      let toolCallIterations = 0;
+      const maxToolCallIterations = 20;
 
       while (currentResponse.toolCalls && currentResponse.toolCalls.length > 0) {
+        toolCallIterations++;
+        if (toolCallIterations > maxToolCallIterations) {
+          logger.error(`Max tool call iterations (${maxToolCallIterations}) exceeded, terminating loop`);
+          break;
+        }
         const toolResults = await this.executeToolCalls(currentResponse.toolCalls);
 
         for (const result of toolResults) {
@@ -290,6 +297,12 @@ export class AgentRuntime {
 
           this.metrics.totalTokens += retryResponse.usage.totalTokens;
           finalContent = retryResponse.content;
+
+          // Log if retry also failed validation (best-effort: return whatever we got)
+          const retryValidation = this.outputValidator.validateStructuredOutput(retryResponse.content, this.outputSchema!);
+          if (!retryValidation.valid) {
+            logger.warn(`Structured output retry also failed validation: ${retryValidation.errors.join('; ')}`);
+          }
         }
       }
 
@@ -357,6 +370,13 @@ export class AgentRuntime {
 
       try {
         const args = JSON.parse(call.function.arguments);
+        if (typeof args !== 'object' || args === null || Array.isArray(args)) {
+          results.push({
+            toolCallId: call.id,
+            content: `Error: Tool arguments must be a JSON object, got ${Array.isArray(args) ? 'array' : typeof args}`,
+          });
+          continue;
+        }
         const result = await handler(args);
         results.push({
           toolCallId: call.id,

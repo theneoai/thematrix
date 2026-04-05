@@ -113,7 +113,7 @@ export class MCPServer implements IMCPServer {
   private async handleRequest(request: JsonRpcRequest): Promise<JsonRpcResponse | null> {
     const { method, id, params } = request;
 
-    logger.info(`Received request: ${method} (id: ${id})`);
+    logger.debug(`Received request: ${method} (id: ${id})`);
 
     // Notifications (no id) don't require a response
     if (method === 'notifications/initialized') {
@@ -192,7 +192,7 @@ export class MCPServer implements IMCPServer {
         error: { code: -32602, message: 'Missing required parameter: name' },
       };
     }
-    const toolArgs = (typeof params.arguments === 'object' && params.arguments !== null
+    const toolArgs = (typeof params.arguments === 'object' && params.arguments !== null && !Array.isArray(params.arguments)
       ? params.arguments as Record<string, unknown>
       : {});
 

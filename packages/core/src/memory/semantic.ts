@@ -63,35 +63,30 @@ export class SemanticMemory {
     documents: Array<{ content: string; metadata?: Record<string, unknown> }>
   ): Promise<string[]> {
     const BATCH_SIZE = 100;
-    if (documents.length > BATCH_SIZE) {
-      // Process in batches to avoid overwhelming embedding API
-      const allIds: string[] = [];
-      for (let i = 0; i < documents.length; i += BATCH_SIZE) {
-        const batch = documents.slice(i, i + BATCH_SIZE);
-        const batchIds = await this.storeMany(collection, batch);
-        allIds.push(...batchIds);
-      }
-      return allIds;
+    const allIds: string[] = [];
+
+    // Iterative batching to avoid stack overflow on large document sets
+    for (let i = 0; i < documents.length; i += BATCH_SIZE) {
+      const batch = documents.slice(i, i + BATCH_SIZE);
+      const texts = batch.map(d => d.content);
+      const embeddings = await this.embeddingProvider.embed(texts);
+
+      const vectorDocs = batch.map((doc, j) => {
+        const id = generateId();
+        allIds.push(id);
+        return {
+          id,
+          content: doc.content,
+          embedding: embeddings[j],
+          metadata: doc.metadata ?? {},
+        };
+      });
+
+      await this.vectorStore.upsert(collection, vectorDocs);
     }
 
-    const texts = documents.map(d => d.content);
-    const embeddings = await this.embeddingProvider.embed(texts);
-    const ids: string[] = [];
-
-    const vectorDocs = documents.map((doc, i) => {
-      const id = generateId();
-      ids.push(id);
-      return {
-        id,
-        content: doc.content,
-        embedding: embeddings[i],
-        metadata: doc.metadata ?? {},
-      };
-    });
-
-    await this.vectorStore.upsert(collection, vectorDocs);
     logger.debug(`Stored ${documents.length} documents in "${collection}"`);
-    return ids;
+    return allIds;
   }
 
   /**

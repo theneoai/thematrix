@@ -140,8 +140,8 @@ export class AgentLoop {
           break;
         }
 
-        // Feed the suggestion back as input for the next iteration
-        currentInput = reflection.suggestion || lastOutput;
+        // Feed the suggestion back as input for the next iteration, preserving original goal
+        currentInput = `Original goal: ${input}\n\nReflection feedback: ${reflection.suggestion || lastOutput}`;
       } else {
         // Without reflection, feed agent output as next input
         currentInput = lastOutput;
@@ -308,7 +308,8 @@ export class AgentLoop {
     try {
       const history = await memory.getHistory(this.runtime.instanceId);
       return history.map((h) => `[${h.role}] ${h.content}`);
-    } catch {
+    } catch (error) {
+      logger.error('Failed to get history summaries:', error);
       return [];
     }
   }

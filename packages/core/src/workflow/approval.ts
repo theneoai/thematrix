@@ -138,9 +138,12 @@ export class ApprovalManager implements IApprovalManager {
     return new Promise<ApprovalStatus>((resolve) => {
       const entry: PendingApproval = { resolve };
 
+      // Register pending BEFORE setting timeout to prevent race with approve/reject
+      this.pending.set(approvalId, entry);
+
       if (timeoutMs !== undefined && timeoutMs > 0) {
         entry.timer = setTimeout(async () => {
-          // Only time out if still pending
+          // Only time out if still pending (approve/reject may have resolved already)
           if (approval.status !== 'pending') return;
 
           approval.status = 'timed_out';
@@ -160,8 +163,6 @@ export class ApprovalManager implements IApprovalManager {
           resolve('timed_out');
         }, timeoutMs);
       }
-
-      this.pending.set(approvalId, entry);
     });
   }
 

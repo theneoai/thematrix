@@ -161,6 +161,10 @@ export function SemanticSimilarityMetric(
  * Cosine similarity between two vectors.
  */
 function cosineSimilarity(a: number[], b: number[]): number {
+  if (a.length !== b.length) {
+    throw new Error(`Vector length mismatch in cosine similarity: ${a.length} vs ${b.length}`);
+  }
+
   let dotProduct = 0;
   let normA = 0;
   let normB = 0;
