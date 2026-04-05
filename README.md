@@ -11,7 +11,13 @@ TheMatrix is a production-grade system for building, running, and managing multi
 ## Key Features
 
 - **14+ LLM Providers** — OpenAI, Anthropic, Gemini, DeepSeek, Ollama, vLLM, OpenRouter, Moonshot, MiniMax, Qwen, HuggingFace, Azure OpenAI, OpenCode, KimiCode
-- **Multi-Agent Workflows** — DAG and state-machine execution modes with shared memory
+- **Multi-Agent Workflows** — DAG, state-machine, and dynamic execution modes with shared memory
+- **Autonomous Agent Loop** — Three modes: single-turn, autonomous loop, plan-and-execute with reflection
+- **Agent Handoff** — Dynamic runtime delegation between agents with configurable targets
+- **Input/Output Guardrails** — Content safety, PII detection, prompt injection, custom LLM-based checks
+- **Human-in-the-Loop** — Approval gates in DAG workflows with timeout, auto-approve, and webhook callbacks
+- **MCP Protocol** — Client and server for tool interoperability (JSON-RPC over stdio + HTTP)
+- **Evaluation Framework** — 5 metric types: exact-match, contains, JSON validity, LLM-judge, semantic similarity
 - **Distributed Execution** — Local, Docker, SSH (remote PC), and Kubernetes backends
 - **Webhook Gateway** — Gerrit, Jira, GitLab, Feishu, WeChat, DingTalk, Slack, custom IM
 - **Token Resource Pool** — Budget allocation, per-agent/workflow limits, rate limiting, cost tracking
@@ -90,28 +96,30 @@ docker compose up -d
 
 ## Package Overview
 
-| Package | Description | Size |
-|---------|-------------|------|
-| `@thematrix/types` | TypeScript type definitions for all domains | Core |
-| `@thematrix/utils` | Shared utilities (logger, ID generator, retry) | Core |
-| `@thematrix/config` | Zod schema validation + YAML config loading | Core |
+| Package | Description | Layer |
+|---------|-------------|-------|
+| `@thematrix/types` | TypeScript type definitions for all domains | Foundation |
+| `@thematrix/utils` | Shared utilities (logger, ID generator, retry) | Foundation |
+| `@thematrix/config` | Zod schema validation + YAML config loading | Foundation |
 | `@thematrix/adapters` | LLM adapter implementations (Anthropic, OpenAI, etc.) | Core |
-| `@thematrix/core` | Agent runtime, workflow engine, event bus, memory | Core |
-| `@thematrix/providers` | Provider plugin system, token pool, router, secrets | Cluster |
-| `@thematrix/executor` | Execution backends (Local/Docker/SSH/K8s) | Cluster |
-| `@thematrix/gateway` | Webhook server + 8 platform adapters | Cluster |
-| `@thematrix/scheduler` | Cron scheduling + event-driven triggers | Cluster |
-| `@thematrix/monitor` | REST API + SSE + alerts + Prometheus metrics | Cluster |
-| `@thematrix/cluster` | Multi-node management + distribution strategies | Cluster |
-| `apps/dashboard` | Next.js 15 web dashboard | App |
-| `apps/cli` | Command-line interface | App |
+| `@thematrix/core` | Agent runtime, workflow engine, guardrails, memory, events, policy | Core |
+| `@thematrix/mcp` | MCP client/server + agent & workflow tool definitions | Core |
+| `@thematrix/eval` | Evaluation framework with 5 metric types | Core |
+| `@thematrix/providers` | Provider plugin system, token pool, router, secrets | Infrastructure |
+| `@thematrix/executor` | Execution backends (Local/Docker/SSH/K8s) | Infrastructure |
+| `@thematrix/gateway` | Webhook server + 8 platform adapters | Orchestration |
+| `@thematrix/scheduler` | Cron scheduling + event-driven triggers | Orchestration |
+| `@thematrix/monitor` | REST API + SSE + alerts + Prometheus metrics | Orchestration |
+| `@thematrix/cluster` | Multi-node management + distribution strategies | Infrastructure |
+| `apps/dashboard` | Next.js 15 web dashboard with dark theme + Cmd+K | App |
+| `apps/cli` | Command-line interface (Commander.js) | App |
 
 ## Supported Providers
 
 | Provider | Type | Models |
 |----------|------|--------|
 | OpenAI | Cloud | GPT-4o, GPT-4o Mini, o3-mini |
-| Anthropic | Cloud | Claude Opus 4.5, Sonnet 4.5, Haiku 4.5 |
+| Anthropic | Cloud | Claude Opus 4, Sonnet 4, Haiku 4.5 |
 | Google Gemini | Cloud | Gemini 2.5 Pro, 2.0 Flash |
 | DeepSeek | Cloud | DeepSeek Chat (V3), Reasoner (R1) |
 | Moonshot (Kimi) | Cloud | Moonshot V1 8K/32K/128K |

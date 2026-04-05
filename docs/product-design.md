@@ -70,9 +70,21 @@ Using the provider router with `least-cost` strategy:
 | Feature | Status | Package |
 |---------|--------|---------|
 | Agent definition (persona, model, skills, tools) | Implemented | @thematrix/types, @thematrix/core |
-| Workflow engine (DAG + state-machine modes) | Implemented | @thematrix/core |
+| Agent loop (3 modes: single-turn, loop, plan-and-execute) | Implemented | @thematrix/core |
+| Agent planning (LLM-based task decomposition) | Implemented | @thematrix/core |
+| Agent reflection (self-evaluation with quality scoring) | Implemented | @thematrix/core |
+| Agent handoff (dynamic agent-to-agent delegation) | Implemented | @thematrix/core |
+| Workflow engine (DAG + state-machine + dynamic modes) | Implemented | @thematrix/core |
+| Human-in-the-loop approval gates | Implemented | @thematrix/core |
+| Input/output guardrails (safety, PII, injection, custom LLM) | Implemented | @thematrix/core |
+| Structured output validation with retry | Implemented | @thematrix/core |
+| Policy engine (rule-based evaluation) | Implemented | @thematrix/core |
+| Environment management (per-env config overrides) | Implemented | @thematrix/core |
 | Event sourcing with replay | Implemented | @thematrix/core |
 | Memory management (KV, vector, conversation) | Implemented | @thematrix/core |
+| Semantic memory (embedding + vector search) | Implemented | @thematrix/core |
+| MCP protocol (client + server, stdio + HTTP transport) | Implemented | @thematrix/mcp |
+| Evaluation framework (5 metric types, concurrent execution) | Implemented | @thematrix/eval |
 | YAML configuration with Zod validation | Implemented | @thematrix/config |
 | CLI management tool | Implemented | @thematrix/cli |
 
@@ -235,11 +247,11 @@ All definitions (agents, workflows, triggers, schedules) are YAML files validate
 - Rate limiting on gateway endpoints
 
 ### Phase 3 -- Advanced Features
-- Visual workflow editor in dashboard
+- Visual workflow editor in dashboard (React Flow DAG canvas)
 - A/B testing for agent configurations
-- Vector memory with embedding support
-- MCP server exposing workflows as tools
 - Plugin marketplace
+- Custom guardrail templates library
+- Eval suite dashboard integration
 
 ### Phase 4 -- Enterprise
 - Multi-tenant isolation
