@@ -46,9 +46,18 @@ export class SSHExecutionBackend implements ExecutionBackend {
     );
   }
 
+  private static readonly MAX_TIMEOUT_MS = 3_600_000;
+  private static readonly MIN_TIMEOUT_MS = 1_000;
+
   async execute(task: ExecutionTask): Promise<ExecutionResult> {
     if (!this.config) {
       throw new Error('SSH backend not initialized. Call initialize() first.');
+    }
+
+    // Prevent duplicate taskId from overwriting an active task
+    const existing = this.tasks.get(task.taskId);
+    if (existing && (existing.status === 'running' || existing.status === 'pending')) {
+      throw new Error(`Task ${task.taskId} is already running`);
     }
 
     const startedAt = new Date();
@@ -84,8 +93,12 @@ export class SSHExecutionBackend implements ExecutionBackend {
 
       // 2. Execute the agent remotely
       record.status = 'running';
-      const nodeCmd = this.config.nodeVersion
-        ? `nvm use ${this.config.nodeVersion} && node`
+      const nodeVersion = this.config.nodeVersion;
+      if (nodeVersion && !/^v?\d+(\.\d+)*$/.test(nodeVersion)) {
+        throw new Error(`Invalid node version format: ${nodeVersion}`);
+      }
+      const nodeCmd = nodeVersion
+        ? `nvm use ${nodeVersion} && node`
         : 'node';
 
       // Run a minimal script that reads the task payload and executes it.
@@ -100,7 +113,9 @@ export class SSHExecutionBackend implements ExecutionBackend {
         `"`,
       ].join(' ');
 
-      const { stdout, exitCode } = await this.sshExec(remoteScript, undefined, task.timeout);
+      const rawTimeout = task.timeout ?? 300_000;
+      const timeoutMs = Math.min(Math.max(rawTimeout, SSHExecutionBackend.MIN_TIMEOUT_MS), SSHExecutionBackend.MAX_TIMEOUT_MS);
+      const { stdout, exitCode } = await this.sshExec(remoteScript, undefined, timeoutMs);
 
       // 3. Try to read the remote PID
       try {
@@ -162,7 +177,8 @@ export class SSHExecutionBackend implements ExecutionBackend {
     if (record.remotePid) {
       logger.info(`Killing remote process ${record.remotePid} for task ${taskId}`);
       try {
-        await this.sshExec(`kill -TERM ${record.remotePid}`);
+        const pid = this.validatePid(record.remotePid);
+        await this.sshExec(`kill -TERM ${pid}`);
       } catch {
         // Process may have already exited
       }
@@ -182,7 +198,8 @@ export class SSHExecutionBackend implements ExecutionBackend {
     // Check if a running task's remote process is still alive
     if (record.status === 'running' && record.remotePid) {
       try {
-        await this.sshExec(`kill -0 ${record.remotePid}`);
+        const pid = this.validatePid(record.remotePid);
+        await this.sshExec(`kill -0 ${pid}`);
         // Process is still running
       } catch {
         // Process has exited
@@ -243,7 +260,8 @@ export class SSHExecutionBackend implements ExecutionBackend {
     for (const [taskId, record] of this.tasks) {
       if ((record.status === 'running' || record.status === 'pending') && record.remotePid) {
         try {
-          await this.sshExec(`kill -TERM ${record.remotePid}`);
+          const pid = this.validatePid(record.remotePid);
+          await this.sshExec(`kill -TERM ${pid}`);
           logger.info(`Disposed: killed remote process ${record.remotePid} for task ${taskId}`);
         } catch {
           // Best-effort cleanup
@@ -274,6 +292,14 @@ export class SSHExecutionBackend implements ExecutionBackend {
 
     args.push(`${config.username}@${config.host}`);
     return args;
+  }
+
+  /** Validate that a PID is a safe integer to prevent shell injection */
+  private validatePid(pid: number): number {
+    if (!Number.isInteger(pid) || pid <= 0) {
+      throw new Error(`Invalid PID: ${pid}`);
+    }
+    return pid;
   }
 
   private sshExec(

@@ -70,9 +70,18 @@ export class K8sExecutionBackend implements ExecutionBackend {
     );
   }
 
+  private static readonly MAX_TIMEOUT_MS = 3_600_000;
+  private static readonly MIN_TIMEOUT_MS = 1_000;
+
   async execute(task: ExecutionTask): Promise<ExecutionResult> {
     if (!this.config) {
       throw new Error('K8s backend not initialized. Call initialize() first.');
+    }
+
+    // Prevent duplicate taskId from overwriting an active task
+    const existing = this.jobs.get(task.taskId);
+    if (existing && (existing.status === 'running' || existing.status === 'pending')) {
+      throw new Error(`Task ${task.taskId} is already running`);
     }
 
     const startedAt = new Date();
@@ -104,7 +113,9 @@ export class K8sExecutionBackend implements ExecutionBackend {
       logger.info(`Job ${jobName} created, waiting for completion...`);
 
       // Poll for job completion
-      const result = await this.waitForJob(jobName, namespace, task.timeout ?? 600_000);
+      const rawTimeout = task.timeout ?? 600_000;
+      const timeoutMs = Math.min(Math.max(rawTimeout, K8sExecutionBackend.MIN_TIMEOUT_MS), K8sExecutionBackend.MAX_TIMEOUT_MS);
+      const result = await this.waitForJob(jobName, namespace, timeoutMs);
 
       const completedAt = new Date();
       record.completedAt = completedAt;
