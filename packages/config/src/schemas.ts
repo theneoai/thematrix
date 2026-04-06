@@ -52,6 +52,9 @@ export const agentLoopConfigSchema = z.object({
   enablePlanning: z.boolean().optional(),
   exitCondition: z.string().optional(),
   handoffTargets: z.array(z.string()).optional(),
+  enableContextManagement: z.boolean().optional(),
+  maxContextTokens: z.number().optional(),
+  enableTracing: z.boolean().optional(),
 });
 
 // ============================================================

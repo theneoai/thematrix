@@ -12,6 +12,7 @@ const navigation = [
   { name: 'Triggers', href: '/triggers', icon: '⚡' },
   { name: 'Cluster', href: '/cluster', icon: '⬢' },
   { name: 'Alerts', href: '/alerts', icon: '▲' },
+  { name: 'Approvals', href: '/approvals', icon: '✓' },
   { name: 'Settings', href: '/settings', icon: '⚙' },
 ];
 

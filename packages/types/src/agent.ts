@@ -95,6 +95,12 @@ export interface AgentLoopConfig {
   exitCondition?: string;
   /** Handoff targets: agents this agent can delegate to */
   handoffTargets?: string[];
+  /** Enable context window management (auto-summarize when history grows large) */
+  enableContextManagement?: boolean;
+  /** Maximum context tokens before summarization triggers (default: 8000) */
+  maxContextTokens?: number;
+  /** Enable decision tracing for observability */
+  enableTracing?: boolean;
 }
 
 /** A single step in an agent-generated plan */

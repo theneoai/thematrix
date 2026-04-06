@@ -3,6 +3,7 @@ import './globals.css';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { Header } from '@/components/layout/Header';
 import { CommandPalette } from '@/components/layout/CommandPalette';
+import { NotificationToast } from '@/components/shared/NotificationToast';
 import { Providers } from './providers';
 
 export const metadata: Metadata = {
@@ -29,6 +30,7 @@ export default function RootLayout({
             </div>
           </div>
           <CommandPalette />
+          <NotificationToast />
         </Providers>
       </body>
     </html>
