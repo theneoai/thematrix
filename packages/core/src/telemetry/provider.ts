@@ -19,6 +19,8 @@ import type {
   TelemetryConfig,
 } from '@thematrix/types';
 import { Logger } from '@thematrix/utils';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { randomBytes } from 'node:crypto';
 
 const logger = new Logger({ prefix: 'Telemetry' });
 
@@ -58,22 +60,12 @@ export class NoopTelemetryProvider implements ITelemetryProvider {
 // In-Memory Implementation (for testing and development)
 // ============================================================
 
-let spanIdCounter = 0;
-
 function generateTraceId(): string {
-  const bytes = new Uint8Array(16);
-  for (let i = 0; i < 16; i++) {
-    bytes[i] = Math.floor(Math.random() * 256);
-  }
-  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+  return randomBytes(16).toString('hex');
 }
 
 function generateSpanId(): string {
-  spanIdCounter++;
-  const bytes = new Uint8Array(8);
-  const view = new DataView(bytes.buffer);
-  view.setBigUint64(0, BigInt(Date.now() * 1000 + spanIdCounter));
-  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+  return randomBytes(8).toString('hex');
 }
 
 export interface RecordedSpan {
@@ -140,48 +132,63 @@ class InMemorySpan implements ITelemetrySpan {
   }
 }
 
+/** Per-async-context span stack using AsyncLocalStorage */
+const spanStorage = new AsyncLocalStorage<InMemorySpan[]>();
+
 export class InMemoryTelemetryProvider implements ITelemetryProvider {
   readonly spans: RecordedSpan[] = [];
-  private activeSpanStack: InMemorySpan[] = [];
   private currentTraceId: string = generateTraceId();
 
   startSpan(name: string, options?: TelemetrySpanOptions): ITelemetrySpan {
-    const parentContext = options?.parent ?? this.getActiveSpan()?.context;
+    const stack = spanStorage.getStore();
+    const parentContext = options?.parent
+      ?? (stack && stack.length > 0 ? stack[stack.length - 1].context : undefined);
     const traceId = parentContext?.traceId ?? this.currentTraceId;
     const span = new InMemorySpan(name, traceId, parentContext, options);
     this.spans.push(span.record);
-    this.activeSpanStack.push(span);
+    // Push onto per-async-context stack if available
+    if (stack) {
+      stack.push(span);
+    }
     return span;
   }
 
   getActiveSpan(): ITelemetrySpan | undefined {
-    return this.activeSpanStack.length > 0
-      ? this.activeSpanStack[this.activeSpanStack.length - 1]
-      : undefined;
+    const stack = spanStorage.getStore();
+    return stack && stack.length > 0 ? stack[stack.length - 1] : undefined;
   }
 
   async withSpan<T>(name: string, fn: (span: ITelemetrySpan) => Promise<T>, options?: TelemetrySpanOptions): Promise<T> {
-    const span = this.startSpan(name, options);
-    try {
-      const result = await fn(span);
-      span.setStatus({ code: 'ok' });
-      return result;
-    } catch (error) {
-      if (error instanceof Error) {
-        span.recordException(error);
+    // Create a new stack inheriting from parent context, or start fresh
+    const parentStack = spanStorage.getStore() ?? [];
+    const newStack = [...parentStack];
+
+    return spanStorage.run(newStack, async () => {
+      const span = this.startSpan(name, options);
+      try {
+        const result = await fn(span);
+        span.setStatus({ code: 'ok' });
+        return result;
+      } catch (error) {
+        if (error instanceof Error) {
+          span.recordException(error);
+        }
+        throw error;
+      } finally {
+        span.end();
+        const idx = newStack.indexOf(span as InMemorySpan);
+        if (idx !== -1) newStack.splice(idx, 1);
       }
-      throw error;
-    } finally {
-      span.end();
-      const idx = this.activeSpanStack.indexOf(span as InMemorySpan);
-      if (idx !== -1) this.activeSpanStack.splice(idx, 1);
-    }
+    });
   }
 
   inject(carrier: Record<string, string>): void {
     const activeSpan = this.getActiveSpan();
     if (activeSpan) {
-      carrier['traceparent'] = `00-${activeSpan.context.traceId}-${activeSpan.context.spanId}-0${activeSpan.context.traceFlags}`;
+      // W3C Trace Context format: 00-{traceId}-{spanId}-{flags}
+      // flags is 2 hex chars (e.g., 01 for sampled)
+      const flags = activeSpan.context.traceFlags.toString(16).padStart(2, '0');
+      carrier['traceparent'] = `00-${activeSpan.context.traceId}-${activeSpan.context.spanId}-${flags}`;
     }
   }
 
@@ -205,7 +212,6 @@ export class InMemoryTelemetryProvider implements ITelemetryProvider {
 
   async shutdown(): Promise<void> {
     this.spans.length = 0;
-    this.activeSpanStack.length = 0;
     logger.info('InMemoryTelemetryProvider shut down');
   }
 
@@ -217,7 +223,6 @@ export class InMemoryTelemetryProvider implements ITelemetryProvider {
   /** 清空所有 span (用于测试) */
   clear(): void {
     this.spans.length = 0;
-    this.activeSpanStack.length = 0;
     this.currentTraceId = generateTraceId();
   }
 }

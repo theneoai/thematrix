@@ -20,6 +20,7 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 export class A2AClient implements IA2AClient {
   private readonly timeoutMs: number;
   private readonly headers: Record<string, string>;
+  private nextRequestId = 1;
 
   constructor(options: { timeoutMs?: number; headers?: Record<string, string> } = {}) {
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -145,10 +146,16 @@ export class A2AClient implements IA2AClient {
   // Private helpers
   // -----------------------------------------------------------------------
 
+  private getNextId(): number {
+    const id = this.nextRequestId;
+    this.nextRequestId = this.nextRequestId >= 2 ** 31 - 1 ? 1 : this.nextRequestId + 1;
+    return id;
+  }
+
   private async rpcCall(url: string, method: string, params: Record<string, unknown>): Promise<unknown> {
     const request = {
       jsonrpc: '2.0',
-      id: Date.now(),
+      id: this.getNextId(),
       method,
       params,
     };

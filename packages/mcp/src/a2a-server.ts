@@ -22,6 +22,9 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 
 const logger = new Logger({ prefix: 'A2AServer' });
 
+/** 请求体大小限制 (1MB) */
+const MAX_BODY_SIZE = 1024 * 1024;
+
 export class AgentRegistry implements IAgentRegistry {
   private readonly agents = new Map<string, AgentCard>();
 
@@ -53,6 +56,8 @@ export class AgentRegistry implements IAgentRegistry {
 export interface A2AServerConfig {
   port: number;
   host?: string;
+  /** 请求体大小限制 (bytes, default: 1MB) */
+  maxBodySize?: number;
 }
 
 export class A2AServer implements IA2AServer {
@@ -62,10 +67,12 @@ export class A2AServer implements IA2AServer {
   private readonly sseClients = new Map<string, Set<ServerResponse>>();
   private taskHandler?: A2ATaskHandler;
   private server: Server | null = null;
+  private readonly maxBodySize: number;
 
   constructor(config: A2AServerConfig, registry?: AgentRegistry) {
     this.config = config;
     this.registry = registry ?? new AgentRegistry();
+    this.maxBodySize = config.maxBodySize ?? MAX_BODY_SIZE;
   }
 
   registerAgent(card: AgentCard): void {
@@ -81,9 +88,14 @@ export class A2AServer implements IA2AServer {
   }
 
   async start(): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       this.server = createServer((req, res) => {
         void this.handleRequest(req, res);
+      });
+
+      this.server.on('error', (err) => {
+        logger.error(`Server error: ${err.message}`);
+        reject(err);
       });
 
       this.server.listen(this.config.port, this.config.host ?? '0.0.0.0', () => {
@@ -149,40 +161,57 @@ export class A2AServer implements IA2AServer {
   }
 
   private async handleJsonRpc(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const body = await readBody(req);
-
-    let parsed: { jsonrpc: string; id?: number; method: string; params?: Record<string, unknown> };
+    let body: string;
     try {
-      parsed = JSON.parse(body);
+      body = await readBody(req, this.maxBodySize);
+    } catch (error) {
+      this.sendJsonRpcError(res, null, -32600, error instanceof Error ? error.message : 'Invalid request');
+      return;
+    }
+
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(body) as Record<string, unknown>;
     } catch {
       this.sendJsonRpcError(res, null, -32700, 'Parse error');
       return;
     }
 
-    const { id, method, params } = parsed;
+    const id = typeof parsed.id === 'number' ? parsed.id : 0;
+    const method = typeof parsed.method === 'string' ? parsed.method : '';
+    const params = (typeof parsed.params === 'object' && parsed.params !== null && !Array.isArray(parsed.params))
+      ? parsed.params as Record<string, unknown>
+      : {};
+
+    if (!method) {
+      this.sendJsonRpcError(res, id, -32600, 'Missing required field: method');
+      return;
+    }
 
     try {
       switch (method) {
         case 'tasks/send':
-          return this.handleTaskSend(res, id ?? 0, params ?? {});
+          return this.handleTaskSend(res, id, params);
         case 'tasks/get':
-          return this.handleTaskGet(res, id ?? 0, params ?? {});
+          return this.handleTaskGet(res, id, params);
         case 'tasks/cancel':
-          return this.handleTaskCancel(res, id ?? 0, params ?? {});
+          return this.handleTaskCancel(res, id, params);
         case 'tasks/sendSubscribe':
-          return this.handleTaskSubscribe(res, id ?? 0, params ?? {});
+          return this.handleTaskSubscribe(res, id, params);
         default:
-          this.sendJsonRpcError(res, id ?? null, -32601, `Method not found: ${method}`);
+          this.sendJsonRpcError(res, id, -32601, `Method not found: ${method}`);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.sendJsonRpcError(res, id ?? null, -32603, message);
+      this.sendJsonRpcError(res, id, -32603, message);
     }
   }
 
   private handleTaskSend(res: ServerResponse, id: number, params: Record<string, unknown>): void {
-    const taskId = (params.id as string) ?? generateId();
-    const message = params.message as A2AMessage;
+    const taskId = typeof params.id === 'string' ? params.id : generateId();
+    const message = (typeof params.message === 'object' && params.message !== null)
+      ? params.message as A2AMessage
+      : undefined;
 
     let task = this.tasks.get(taskId);
     if (!task) {
@@ -208,9 +237,13 @@ export class A2AServer implements IA2AServer {
     // Notify SSE subscribers
     this.notifySubscribers(taskId, { type: 'status-update', taskId, status: 'working' });
 
+    // Send response immediately (task executes asynchronously)
+    this.sendJsonRpcResult(res, id, { task: { ...task } });
+
     // Execute task asynchronously via handler
     if (this.taskHandler) {
-      void this.taskHandler(task).then((updatedTask) => {
+      const currentTask = task;
+      void this.taskHandler(currentTask).then((updatedTask) => {
         this.tasks.set(taskId, updatedTask);
         this.notifySubscribers(taskId, {
           type: 'status-update',
@@ -218,20 +251,23 @@ export class A2AServer implements IA2AServer {
           status: updatedTask.status,
         });
       }).catch((error) => {
-        task!.status = 'failed';
-        task!.updatedAt = new Date();
+        currentTask.status = 'failed';
+        currentTask.updatedAt = new Date();
+        this.tasks.set(taskId, currentTask);
         logger.error(`Task ${taskId} failed: ${error instanceof Error ? error.message : String(error)}`);
         this.notifySubscribers(taskId, { type: 'status-update', taskId, status: 'failed' });
       });
     }
-
-    this.sendJsonRpcResult(res, id, { task });
   }
 
   private handleTaskGet(res: ServerResponse, id: number, params: Record<string, unknown>): void {
-    const taskId = params.id as string;
-    const task = this.tasks.get(taskId);
+    const taskId = typeof params.id === 'string' ? params.id : '';
+    if (!taskId) {
+      this.sendJsonRpcError(res, id, -32602, 'Missing required parameter: id');
+      return;
+    }
 
+    const task = this.tasks.get(taskId);
     if (!task) {
       this.sendJsonRpcError(res, id, -32602, `Task not found: ${taskId}`);
       return;
@@ -241,9 +277,13 @@ export class A2AServer implements IA2AServer {
   }
 
   private handleTaskCancel(res: ServerResponse, id: number, params: Record<string, unknown>): void {
-    const taskId = params.id as string;
-    const task = this.tasks.get(taskId);
+    const taskId = typeof params.id === 'string' ? params.id : '';
+    if (!taskId) {
+      this.sendJsonRpcError(res, id, -32602, 'Missing required parameter: id');
+      return;
+    }
 
+    const task = this.tasks.get(taskId);
     if (!task) {
       this.sendJsonRpcError(res, id, -32602, `Task not found: ${taskId}`);
       return;
@@ -257,7 +297,7 @@ export class A2AServer implements IA2AServer {
   }
 
   private handleTaskSubscribe(res: ServerResponse, _id: number, params: Record<string, unknown>): void {
-    const taskId = params.id as string;
+    const taskId = typeof params.id === 'string' ? params.id : '';
 
     // Switch to SSE mode
     res.writeHead(200, {
@@ -277,9 +317,12 @@ export class A2AServer implements IA2AServer {
       res.write(`data: ${JSON.stringify({ type: 'status-update', taskId, status: task.status })}\n\n`);
     }
 
-    req_cleanup(res, () => {
+    // Cleanup on disconnect
+    const cleanup = (): void => {
       this.sseClients.get(taskId)?.delete(res);
-    });
+    };
+    res.on('close', cleanup);
+    res.on('error', cleanup);
   }
 
   // -----------------------------------------------------------------------
@@ -292,7 +335,12 @@ export class A2AServer implements IA2AServer {
 
     const data = JSON.stringify(event);
     for (const client of clients) {
-      client.write(`data: ${data}\n\n`);
+      try {
+        client.write(`data: ${data}\n\n`);
+      } catch {
+        // Client disconnected; remove on next cleanup cycle
+        clients.delete(client);
+      }
     }
   }
 
@@ -311,16 +359,22 @@ export class A2AServer implements IA2AServer {
 // Utility functions
 // -----------------------------------------------------------------------
 
-function readBody(req: IncomingMessage): Promise<string> {
+function readBody(req: IncomingMessage, maxSize: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on('data', (chunk: Buffer) => chunks.push(chunk));
+    let totalSize = 0;
+
+    req.on('data', (chunk: Buffer) => {
+      totalSize += chunk.length;
+      if (totalSize > maxSize) {
+        req.destroy();
+        reject(new Error(`Request body exceeds maximum size of ${maxSize} bytes`));
+        return;
+      }
+      chunks.push(chunk);
+    });
+
     req.on('end', () => resolve(Buffer.concat(chunks).toString()));
     req.on('error', reject);
   });
-}
-
-function req_cleanup(res: ServerResponse, fn: () => void): void {
-  res.on('close', fn);
-  res.on('error', fn);
 }

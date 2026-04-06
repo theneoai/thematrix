@@ -174,7 +174,7 @@ export class CognitiveMemoryManager implements ICognitiveMemoryManager {
     // Text-based relevance: search in summary (simple LIKE matching)
     // For production, use vector similarity with embeddings
     if (query) {
-      sql += ' AND summary LIKE ?';
+      sql += " AND summary LIKE ? ESCAPE '\\'";
       const escaped = query.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
       params.push(`%${escaped}%`);
     }
@@ -185,13 +185,18 @@ export class CognitiveMemoryManager implements ICognitiveMemoryManager {
     const stmt = this.db.prepare(sql);
     const rows = stmt.all(...params) as EpisodicRow[];
 
-    // Update access count and last accessed
-    const updateStmt = this.db.prepare(
-      'UPDATE episodic_memory SET access_count = access_count + 1, last_accessed_at = ? WHERE id = ?',
-    );
-    const now = new Date().toISOString();
-    for (const row of rows) {
-      updateStmt.run(now, row.id);
+    // Update access count and last accessed (batched in transaction)
+    if (rows.length > 0) {
+      const updateStmt = this.db.prepare(
+        'UPDATE episodic_memory SET access_count = access_count + 1, last_accessed_at = ? WHERE id = ?',
+      );
+      const now = new Date().toISOString();
+      const batchUpdate = this.db.transaction(() => {
+        for (const row of rows) {
+          updateStmt.run(now, row.id);
+        }
+      });
+      batchUpdate();
     }
 
     return rows.map(rowToEpisodic);
@@ -259,14 +264,25 @@ export class CognitiveMemoryManager implements ICognitiveMemoryManager {
   async storePreference(
     pref: Omit<UserPreference, 'id' | 'updatedAt'>,
   ): Promise<string> {
-    const id = generateId();
     const now = new Date().toISOString();
 
-    this.db.prepare(`
-      INSERT OR REPLACE INTO user_preferences (id, owner_id, category, key, value, confidence, source, updated_at)
-      VALUES (COALESCE((SELECT id FROM user_preferences WHERE owner_id = ? AND category = ? AND key = ?), ?), ?, ?, ?, ?, ?, ?, ?)
-    `).run(pref.ownerId, pref.category, pref.key, id, pref.ownerId, pref.category, pref.key, JSON.stringify(pref.value), pref.confidence, pref.source, now);
+    // Check for existing preference
+    const existing = this.db.prepare(
+      'SELECT id FROM user_preferences WHERE owner_id = ? AND category = ? AND key = ?',
+    ).get(pref.ownerId, pref.category, pref.key) as { id: string } | undefined;
 
+    if (existing) {
+      this.db.prepare(`
+        UPDATE user_preferences SET value = ?, confidence = ?, source = ?, updated_at = ? WHERE id = ?
+      `).run(JSON.stringify(pref.value), pref.confidence, pref.source, now, existing.id);
+      return existing.id;
+    }
+
+    const id = generateId();
+    this.db.prepare(`
+      INSERT INTO user_preferences (id, owner_id, category, key, value, confidence, source, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, pref.ownerId, pref.category, pref.key, JSON.stringify(pref.value), pref.confidence, pref.source, now);
     return id;
   }
 
@@ -367,22 +383,26 @@ export class CognitiveMemoryManager implements ICognitiveMemoryManager {
 
     // 2. Extract tool sequences from successful episodes as procedural patterns
     for (const ep of episodes) {
-      const context = JSON.parse(ep.context) as EpisodicMemory['context'];
-      if (context.toolsUsed && context.toolsUsed.length >= 2) {
-        // Check if a similar pattern already exists
-        const existingPatterns = await this.findProcedures(ep.summary, 1);
-        if (existingPatterns.length === 0) {
-          await this.recordProcedure({
-            name: `auto-${ep.event_type}`,
-            goalPattern: ep.summary,
-            toolSequence: context.toolsUsed.map((tool, i) => ({
-              order: i,
-              toolOrAgent: tool,
-            })),
-            avgDurationMs: 0,
-          });
-          result.patternsDiscovered++;
+      try {
+        const context = JSON.parse(ep.context) as EpisodicMemory['context'];
+        if (context.toolsUsed && context.toolsUsed.length >= 2) {
+          // Check if a similar pattern already exists
+          const existingPatterns = await this.findProcedures(ep.summary, 1);
+          if (existingPatterns.length === 0) {
+            await this.recordProcedure({
+              name: `auto-${ep.event_type}`,
+              goalPattern: ep.summary,
+              toolSequence: context.toolsUsed.map((tool, i) => ({
+                order: i,
+                toolOrAgent: tool,
+              })),
+              avgDurationMs: 0,
+            });
+            result.patternsDiscovered++;
+          }
         }
+      } catch (error) {
+        logger.warn(`Skipping episode ${ep.id} during consolidation: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
 
