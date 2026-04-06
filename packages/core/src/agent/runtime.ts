@@ -123,7 +123,6 @@ export class AgentRuntime {
     const turnSpan = this.telemetry
       ? traceAgentTurn(this.telemetry, this.definition.id, this.definition.name, this.definition.model.model, this.definition.model.provider)
       : undefined;
-    const turnStartTime = Date.now();
 
     try {
       // ── Input guardrails ──────────────────────────────────────
@@ -185,28 +184,37 @@ export class AgentRuntime {
         ? traceLLMCall(this.telemetry, this.definition.model.model, this.definition.model.provider)
         : undefined;
 
-      const response = await withRetry(
-        () => timeout(
-          this.llmAdapter.chat({
-            model: this.definition.model.model,
-            messages,
-            temperature: this.definition.persona.temperature,
-            maxTokens: this.definition.model.maxTokens,
-            responseFormat,
-          }),
-          this.definition.turnTimeoutMs,
-          'Agent turn timed out'
-        ),
-        {
-          maxRetries: 2,
-          retryDelayMs: 1000,
-        }
-      );
+      let response;
+      try {
+        response = await withRetry(
+          () => timeout(
+            this.llmAdapter.chat({
+              model: this.definition.model.model,
+              messages,
+              temperature: this.definition.persona.temperature,
+              maxTokens: this.definition.model.maxTokens,
+              responseFormat,
+            }),
+            this.definition.turnTimeoutMs,
+            'Agent turn timed out'
+          ),
+          {
+            maxRetries: 2,
+            retryDelayMs: 1000,
+          }
+        );
 
-      if (llmSpan) {
-        recordLLMTokenUsage(llmSpan, response.usage.promptTokens, response.usage.completionTokens);
-        llmSpan.setStatus({ code: 'ok' });
-        llmSpan.end();
+        if (llmSpan) {
+          recordLLMTokenUsage(llmSpan, response.usage.promptTokens, response.usage.completionTokens);
+          llmSpan.setStatus({ code: 'ok' });
+          llmSpan.end();
+        }
+      } catch (error) {
+        if (llmSpan) {
+          llmSpan.setStatus({ code: 'error', message: error instanceof Error ? error.message : String(error) });
+          llmSpan.end();
+        }
+        throw error;
       }
 
       this.metrics.totalTokens += response.usage.totalTokens;
@@ -216,6 +224,7 @@ export class AgentRuntime {
       let currentResponse = response;
       let toolCallIterations = 0;
       const maxToolCallIterations = 20;
+      const allToolsUsed: string[] = [];
 
       while (currentResponse.toolCalls && currentResponse.toolCalls.length > 0) {
         toolCallIterations++;
@@ -223,6 +232,11 @@ export class AgentRuntime {
           logger.error(`Max tool call iterations (${maxToolCallIterations}) exceeded, terminating loop`);
           break;
         }
+        // Collect all tool names used across iterations
+        for (const tc of currentResponse.toolCalls) {
+          allToolsUsed.push(tc.function.name);
+        }
+
         const toolResults = await this.executeToolCalls(currentResponse.toolCalls);
 
         for (const result of toolResults) {
@@ -265,25 +279,33 @@ export class AgentRuntime {
           ? traceLLMCall(this.telemetry, this.definition.model.model, this.definition.model.provider)
           : undefined;
 
-        currentResponse = await withRetry(
-          () => timeout(
-            this.llmAdapter.chat({
-              model: this.definition.model.model,
-              messages: updatedMessages,
-              temperature: this.definition.persona.temperature,
-              maxTokens: this.definition.model.maxTokens,
-              responseFormat,
-            }),
-            this.definition.turnTimeoutMs,
-            'Agent turn timed out'
-          ),
-          { maxRetries: 2, retryDelayMs: 1000 }
-        );
+        try {
+          currentResponse = await withRetry(
+            () => timeout(
+              this.llmAdapter.chat({
+                model: this.definition.model.model,
+                messages: updatedMessages,
+                temperature: this.definition.persona.temperature,
+                maxTokens: this.definition.model.maxTokens,
+                responseFormat,
+              }),
+              this.definition.turnTimeoutMs,
+              'Agent turn timed out'
+            ),
+            { maxRetries: 2, retryDelayMs: 1000 }
+          );
 
-        if (loopLlmSpan) {
-          recordLLMTokenUsage(loopLlmSpan, currentResponse.usage.promptTokens, currentResponse.usage.completionTokens);
-          loopLlmSpan.setStatus({ code: 'ok' });
-          loopLlmSpan.end();
+          if (loopLlmSpan) {
+            recordLLMTokenUsage(loopLlmSpan, currentResponse.usage.promptTokens, currentResponse.usage.completionTokens);
+            loopLlmSpan.setStatus({ code: 'ok' });
+            loopLlmSpan.end();
+          }
+        } catch (error) {
+          if (loopLlmSpan) {
+            loopLlmSpan.setStatus({ code: 'error', message: error instanceof Error ? error.message : String(error) });
+            loopLlmSpan.end();
+          }
+          throw error;
         }
 
         this.metrics.totalTokens += currentResponse.usage.totalTokens;
@@ -381,7 +403,6 @@ export class AgentRuntime {
 
       // Record cognitive memory episode (success)
       if (this.cognitiveMemory) {
-        const toolsUsed = currentResponse.toolCalls?.map(tc => tc.function.name) ?? [];
         this.cognitiveMemory.recordEpisode({
           agentId: this.definition.id,
           eventType: 'task-completion',
@@ -390,7 +411,7 @@ export class AgentRuntime {
             workflowRunId: this.workflowRunId,
             input: input.slice(0, 500),
             output: finalContent.slice(0, 500),
-            toolsUsed: toolsUsed.length > 0 ? toolsUsed : undefined,
+            toolsUsed: allToolsUsed.length > 0 ? allToolsUsed : undefined,
           },
           outcome: 'success',
           importance: 0.5,
@@ -555,6 +576,11 @@ export class AgentRuntime {
   /** Expose tools map for privileged wrappers (HandoffManager) */
   getTools(): Map<string, ToolHandler> {
     return this.tools;
+  }
+
+  /** Expose cognitive memory for privileged wrappers (AgentLoop/Planner) */
+  getCognitiveMemory(): ICognitiveMemoryManager | undefined {
+    return this.cognitiveMemory;
   }
 
   getInstance(): AgentInstance {

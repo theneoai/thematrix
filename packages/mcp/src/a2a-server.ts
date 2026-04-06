@@ -101,12 +101,18 @@ export class A2AServer implements IA2AServer {
         void this.handleRequest(req, res);
       });
 
-      this.server.on('error', (err) => {
+      const onError = (err: Error): void => {
         logger.error(`Server error: ${err.message}`);
         reject(err);
-      });
+      };
+      this.server.on('error', onError);
 
       this.server.listen(this.config.port, this.config.host ?? '0.0.0.0', () => {
+        // Replace startup error handler with runtime error handler
+        this.server!.removeListener('error', onError);
+        this.server!.on('error', (err) => {
+          logger.error(`A2A Server runtime error: ${err.message}`);
+        });
         logger.info(`A2A Server listening on port ${this.config.port}`);
         resolve();
       });

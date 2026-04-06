@@ -10,6 +10,8 @@ import type {
   HandoffResult,
   IMemoryManager,
   LLMAdapter,
+  ITelemetryProvider,
+  ICognitiveMemoryManager,
 } from '@thematrix/types';
 import { EventTypes } from '@thematrix/types';
 import { Logger, generateId } from '@thematrix/utils';
@@ -25,6 +27,8 @@ export interface HandoffManagerOptions {
   messageBroker: IMessageBroker;
   memory: IMemoryManager;
   llmAdapterFactory: (config: { provider: string; model: string }) => LLMAdapter;
+  telemetry?: ITelemetryProvider;
+  cognitiveMemory?: ICognitiveMemoryManager;
 }
 
 export class HandoffManager {
@@ -33,6 +37,8 @@ export class HandoffManager {
   private messageBroker: IMessageBroker;
   private memory: IMemoryManager;
   private llmAdapterFactory: (config: { provider: string; model: string }) => LLMAdapter;
+  private telemetry?: ITelemetryProvider;
+  private cognitiveMemory?: ICognitiveMemoryManager;
   private handoffCount = new Map<string, number>();
 
   constructor(options: HandoffManagerOptions) {
@@ -41,6 +47,8 @@ export class HandoffManager {
     this.messageBroker = options.messageBroker;
     this.memory = options.memory;
     this.llmAdapterFactory = options.llmAdapterFactory;
+    this.telemetry = options.telemetry;
+    this.cognitiveMemory = options.cognitiveMemory;
   }
 
   /**
@@ -188,6 +196,8 @@ export class HandoffManager {
       llmAdapter,
       memory: this.memory,
       eventBus: this.eventBus,
+      telemetry: this.telemetry,
+      cognitiveMemory: this.cognitiveMemory,
     });
 
     await runtime.initialize();

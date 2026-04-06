@@ -89,6 +89,14 @@ export function StepEfficiencyMetric(
   return async (trajectory: Trajectory): Promise<EvalScore> => {
     const actualSteps = trajectory.steps.length;
 
+    if (actualSteps === 0) {
+      return {
+        metric: name,
+        score: 1,
+        reason: '0 steps taken (no work needed)',
+      };
+    }
+
     if (expectedSteps && expectedSteps > 0) {
       // Score = min(expected/actual, 1)
       const score = Math.min(expectedSteps / actualSteps, 1);
@@ -188,6 +196,7 @@ export function TokenEfficiencyMetric(
 export function LLMTrajectoryJudgeMetric(
   name: string,
   llmAdapter: LLMAdapter,
+  model?: string,
 ): TrajectoryMetricFunction {
   return async (trajectory: Trajectory): Promise<EvalScore> => {
     const stepsStr = trajectory.steps
@@ -216,7 +225,7 @@ export function LLMTrajectoryJudgeMetric(
 
     try {
       const response = await llmAdapter.chat({
-        model: '',
+        model: model ?? '',
         messages: [{ role: 'user', content: prompt }],
         temperature: 0,
       });

@@ -497,6 +497,7 @@ export class AgentLoop {
       model: this.runtime.definition.model.model,
       sourceId: this.runtime.instanceId,
       correlationId: this.runtime.workflowRunId,
+      cognitiveMemory: this.runtime.getCognitiveMemory(),
     });
   }
 

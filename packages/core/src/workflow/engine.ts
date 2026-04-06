@@ -544,6 +544,8 @@ export class WorkflowEngine {
       agentRegistry: this.agentRegistry,
       llmAdapterFactory: this.llmAdapterFactory,
       messageBroker: this.messageBroker,
+      telemetry: this.telemetry,
+      cognitiveMemory: this.cognitiveMemory,
     });
 
     await executor.execute(definition, run);
