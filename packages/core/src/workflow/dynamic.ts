@@ -91,6 +91,8 @@ export class DynamicWorkflowExecutor {
       messageBroker: this.messageBroker,
       memory: this.memory,
       llmAdapterFactory: this.llmAdapterFactory,
+      telemetry: this.telemetry,
+      cognitiveMemory: this.cognitiveMemory,
     });
 
     // Create orchestrator runtime

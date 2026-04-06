@@ -16,10 +16,6 @@ import {
   TelemetryAttributes as Attr,
   TelemetrySpanNames as SpanName,
 } from '@thematrix/types';
-import { Logger } from '@thematrix/utils';
-
-const logger = new Logger({ prefix: 'TelemetryInstrumentation' });
-
 /**
  * 为 Agent Turn 创建追踪 span
  */

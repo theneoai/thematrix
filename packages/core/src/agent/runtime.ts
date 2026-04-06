@@ -6,7 +6,6 @@ import type {
   AgentInstance,
   AgentStatus,
   LLMAdapter,
-  ConversationTurn,
   ToolCallRequest,
   ToolCallResult,
   IMemoryManager,
@@ -344,20 +343,38 @@ export class AgentRuntime {
             })),
           ];
 
-          const retryResponse = await withRetry(
-            () => timeout(
-              this.llmAdapter.chat({
-                model: this.definition.model.model,
-                messages: retryMessages,
-                temperature: this.definition.persona.temperature,
-                maxTokens: this.definition.model.maxTokens,
-                responseFormat,
-              }),
-              this.definition.turnTimeoutMs,
-              'Agent turn timed out'
-            ),
-            { maxRetries: 2, retryDelayMs: 1000 }
-          );
+          const retryLlmSpan = this.telemetry
+            ? traceLLMCall(this.telemetry, this.definition.model.model, this.definition.model.provider)
+            : undefined;
+
+          let retryResponse;
+          try {
+            retryResponse = await withRetry(
+              () => timeout(
+                this.llmAdapter.chat({
+                  model: this.definition.model.model,
+                  messages: retryMessages,
+                  temperature: this.definition.persona.temperature,
+                  maxTokens: this.definition.model.maxTokens,
+                  responseFormat,
+                }),
+                this.definition.turnTimeoutMs,
+                'Agent turn timed out'
+              ),
+              { maxRetries: 2, retryDelayMs: 1000 }
+            );
+            if (retryLlmSpan) {
+              recordLLMTokenUsage(retryLlmSpan, retryResponse.usage.promptTokens, retryResponse.usage.completionTokens);
+              retryLlmSpan.setStatus({ code: 'ok' });
+              retryLlmSpan.end();
+            }
+          } catch (error) {
+            if (retryLlmSpan) {
+              retryLlmSpan.setStatus({ code: 'error', message: error instanceof Error ? error.message : String(error) });
+              retryLlmSpan.end();
+            }
+            throw error;
+          }
 
           this.metrics.totalTokens += retryResponse.usage.totalTokens;
           finalContent = retryResponse.content;

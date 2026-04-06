@@ -283,7 +283,9 @@ export class AgentLoop {
         });
 
         // Feed the suggestion back as input for the next iteration, preserving original goal
-        currentInput = `Original goal: ${input}\n\nReflection feedback: ${reflection.suggestion || lastOutput}`;
+        const feedback = reflection.suggestion || lastOutput;
+        const truncatedFeedback = feedback.length > 2000 ? feedback.slice(0, 2000) + '... [truncated]' : feedback;
+        currentInput = `Original goal: ${input}\n\nReflection feedback: ${truncatedFeedback}`;
       } else {
         // Without reflection, feed agent output as next input
         currentInput = lastOutput;
