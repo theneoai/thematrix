@@ -255,7 +255,7 @@ export class A2AServer implements IA2AServer {
     this.notifySubscribers(taskId, { type: 'status-update', taskId, status: 'working' });
 
     // Send response immediately (task executes asynchronously)
-    this.sendJsonRpcResult(res, id, { task: { ...task } });
+    this.sendJsonRpcResult(res, id, { task: { ...task, messages: [...task.messages] } });
 
     // Execute task asynchronously via handler
     if (this.taskHandler) {

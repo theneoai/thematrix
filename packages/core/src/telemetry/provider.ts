@@ -149,8 +149,8 @@ export class InMemoryTelemetryProvider implements ITelemetryProvider {
     const traceId = parentContext?.traceId ?? this.currentTraceId;
     const span = new InMemorySpan(name, traceId, parentContext, options);
     // Evict oldest spans to prevent unbounded memory growth
-    if (this.spans.length >= MAX_SPANS) {
-      this.spans.splice(0, this.spans.length - MAX_SPANS + 1);
+    while (this.spans.length >= MAX_SPANS) {
+      this.spans.shift();
     }
     this.spans.push(span.record);
     // Push onto per-async-context stack if available
@@ -209,6 +209,12 @@ export class InMemoryTelemetryProvider implements ITelemetryProvider {
 
     const parts = traceparent.split('-');
     if (parts.length !== 4) return undefined;
+
+    // Validate W3C Trace Context format: version(2h)-traceId(32h)-spanId(16h)-flags(2h)
+    if (!/^[0-9a-f]{2}$/.test(parts[0])) return undefined;
+    if (!/^[0-9a-f]{32}$/.test(parts[1])) return undefined;
+    if (!/^[0-9a-f]{16}$/.test(parts[2])) return undefined;
+    if (!/^[0-9a-f]{2}$/.test(parts[3])) return undefined;
 
     return {
       traceId: parts[1],

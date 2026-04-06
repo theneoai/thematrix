@@ -336,12 +336,22 @@ export class AgentLoop {
 
         // Check dependencies
         if (step.dependsOn && step.dependsOn.length > 0) {
+          const unmetDeps: string[] = [];
           const allDepsCompleted = step.dependsOn.every(depId => {
             const dep = plan.steps.find(s => s.id === depId);
-            return dep && dep.status === 'completed';
+            if (!dep) {
+              logger.error(`Step ${step.id} depends on unknown step "${depId}" — treating as unmet`);
+              unmetDeps.push(`${depId}(missing)`);
+              return false;
+            }
+            if (dep.status !== 'completed') {
+              unmetDeps.push(`${depId}(${dep.status})`);
+              return false;
+            }
+            return true;
           });
           if (!allDepsCompleted) {
-            logger.warn(`Skipping step ${step.id}: dependencies not met`);
+            logger.warn(`Skipping step ${step.id}: unmet dependencies: ${unmetDeps.join(', ')}`);
             step.status = 'skipped';
             continue;
           }
@@ -412,8 +422,8 @@ export class AgentLoop {
           await this.publishPlanStepCompleted(plan, step);
         }
 
-        // 3. Reflect after each step (if enabled)
-        if (this.config.enableReflection && step.status === 'completed') {
+        // 3. Reflect after each step (if enabled) — reflect on both success and failure
+        if (this.config.enableReflection && (step.status === 'completed' || step.status === 'failed')) {
           const reflectionSpan = this.trace?.startSpan('step-reflection', 'reflection');
           const reflector = this.createReflector();
           const history = outputs.slice();

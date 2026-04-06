@@ -268,8 +268,21 @@ export class MCPClient implements IMCPClient {
 
     if (this.config.transport.type === 'stdio') {
       this.writeToStdin(message);
+    } else if (this.config.transport.type === 'http') {
+      // HTTP transport: fire-and-forget POST (no response expected)
+      const transport = this.config.transport;
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...transport.headers,
+      };
+      fetch(transport.url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(message),
+      }).catch((err) => {
+        logger.warn(`Failed to send notification ${method}: ${(err as Error).message}`);
+      });
     }
-    // HTTP transport: fire-and-forget POST (no response expected)
   }
 
   private writeToStdin(message: object): void {
