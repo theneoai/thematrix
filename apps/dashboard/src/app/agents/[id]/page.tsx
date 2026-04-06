@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { StatusBadge } from '@/components/shared/StatusBadge';
@@ -60,6 +60,7 @@ function TagList({ items }: { items?: string[] }) {
 export default function AgentDetailPage() {
   const params = useParams<{ id: string }>();
   const agentId = params.id;
+  const router = useRouter();
   const queryClient = useQueryClient();
   const notify = useNotificationStore((s) => s.addNotification);
 
@@ -126,8 +127,8 @@ export default function AgentDetailPage() {
       notify('success', 'Agent unregistered', `${agentId} has been removed.`);
       setConfirmAction(null);
       queryClient.invalidateQueries({ queryKey: ['agents'] });
-      // Navigate back via window since we removed the agent
-      window.location.href = '/agents';
+      // Navigate back via router since we removed the agent
+      router.push('/agents');
     },
     onError: (err: Error) => {
       notify('error', 'Failed to unregister agent', err.message);

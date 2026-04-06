@@ -14,9 +14,17 @@ export function createDevCommand(): Command {
       console.log();
       console.log(chalk.yellow('Note: Dashboard is not yet implemented in this version.'));
       console.log(chalk.yellow('It will be available in a future release.'));
-      
-      // Keep process running
+
+      // Keep process running with graceful shutdown
       console.log(chalk.gray('Press Ctrl+C to exit'));
-      await new Promise(() => {});
+
+      await new Promise<void>((resolve) => {
+        const shutdown = () => {
+          console.log(chalk.gray('\nShutting down...'));
+          resolve();
+        };
+        process.on('SIGINT', shutdown);
+        process.on('SIGTERM', shutdown);
+      });
     });
 }

@@ -6,7 +6,11 @@ import ora, { type Ora } from 'ora';
 let currentSpinner: Ora | null = null;
 
 export function startSpinner(text: string): Ora {
-  currentSpinner = ora(text).start();
+  currentSpinner = ora({
+    text,
+    // Disable spinner in non-TTY environments (CI, pipes, log files)
+    isEnabled: process.stderr.isTTY !== false,
+  }).start();
   return currentSpinner;
 }
 

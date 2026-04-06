@@ -10,15 +10,24 @@ interface FormFieldProps {
 }
 
 export function FormField({ label, htmlFor, error, hint, required, children }: FormFieldProps) {
+  const hintId = htmlFor ? `${htmlFor}-hint` : undefined;
+  const errorId = htmlFor ? `${htmlFor}-error` : undefined;
+  const describedBy = error ? errorId : hint ? hintId : undefined;
+
   return (
-    <div className="space-y-1.5">
-      <label htmlFor={htmlFor} className="block text-sm font-medium text-foreground">
+    <div className="space-y-1.5" role="group" aria-labelledby={htmlFor ? `${htmlFor}-label` : undefined}>
+      <label
+        id={htmlFor ? `${htmlFor}-label` : undefined}
+        htmlFor={htmlFor}
+        className="block text-sm font-medium text-foreground"
+      >
         {label}
-        {required && <span className="ml-0.5 text-error">*</span>}
+        {required && <span className="ml-0.5 text-error" aria-hidden="true">*</span>}
       </label>
+      {/* Children should use aria-describedby={describedBy} and aria-required={required} */}
       {children}
-      {hint && !error && <p className="text-xs text-foreground-subtle">{hint}</p>}
-      {error && <p className="text-xs text-error">{error}</p>}
+      {hint && !error && <p id={hintId} className="text-xs text-foreground-subtle">{hint}</p>}
+      {error && <p id={errorId} className="text-xs text-error" role="alert">{error}</p>}
     </div>
   );
 }

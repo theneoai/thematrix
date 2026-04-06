@@ -43,7 +43,7 @@ export function Header() {
         >
           <span>Search...</span>
           <kbd className="text-[10px] border border-border rounded px-1 py-0.5">
-            Cmd+K
+            {typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl+'}K
           </kbd>
         </button>
 

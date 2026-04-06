@@ -50,7 +50,10 @@ export function createWorkflowCommand(): Command {
       try {
         const spinner = startSpinner(`Creating workflow: ${name}...`);
 
-        const id = name.toLowerCase().replace(/\s+/g, '-');
+        const id = name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+        if (!id) {
+          throw new Error('Workflow name must contain at least one alphanumeric character');
+        }
         const content = WORKFLOW_TEMPLATE
           .replace(/{{id}}/g, id)
           .replace(/{{name}}/g, name);
@@ -61,6 +64,9 @@ export function createWorkflowCommand(): Command {
         }
 
         const filePath = join(outputDir, `${id}.workflow.yaml`);
+        if (existsSync(filePath)) {
+          throw new Error(`Workflow file already exists: ${filePath}\nUse a different name or delete the existing file.`);
+        }
         await writeFile(filePath, content);
 
         stopSpinner(true, `Created workflow: ${filePath}`);
@@ -194,8 +200,16 @@ export function createWorkflowCommand(): Command {
         // Load input
         let input: Record<string, unknown> = {};
         if (options.input) {
-          const inputContent = await readFile(resolve(options.input), 'utf-8');
-          input = JSON.parse(inputContent);
+          const inputPath = resolve(options.input);
+          if (!existsSync(inputPath)) {
+            throw new Error(`Input file not found: ${options.input}`);
+          }
+          const inputContent = await readFile(inputPath, 'utf-8');
+          try {
+            input = JSON.parse(inputContent);
+          } catch (parseErr) {
+            throw new Error(`Invalid JSON in ${options.input}: ${(parseErr as Error).message}`);
+          }
         }
         
         updateSpinner('Initializing runtime...');

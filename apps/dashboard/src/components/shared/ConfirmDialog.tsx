@@ -1,7 +1,9 @@
 'use client';
 
+import { useRef, useEffect } from 'react';
 import { Modal } from './Modal';
 import { Button } from './Button';
+
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -24,6 +26,19 @@ export function ConfirmDialog({
   variant = 'default',
   loading = false,
 }: ConfirmDialogProps) {
+  const hasConfirmed = useRef(false);
+
+  // Reset double-click guard when dialog opens
+  useEffect(() => {
+    if (open) hasConfirmed.current = false;
+  }, [open]);
+
+  const handleConfirm = () => {
+    if (hasConfirmed.current || loading) return;
+    hasConfirmed.current = true;
+    onConfirm();
+  };
+
   return (
     <Modal
       open={open}
@@ -37,7 +52,7 @@ export function ConfirmDialog({
           </Button>
           <Button
             variant={variant === 'danger' ? 'danger' : 'primary'}
-            onClick={onConfirm}
+            onClick={handleConfirm}
             loading={loading}
           >
             {confirmLabel}

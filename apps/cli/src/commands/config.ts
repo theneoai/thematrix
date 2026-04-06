@@ -21,8 +21,8 @@ async function loadConfig(): Promise<Config> {
       const content = await readFile(CONFIG_PATH, 'utf-8');
       return JSON.parse(content);
     }
-  } catch {
-    // Ignore errors
+  } catch (error) {
+    console.warn(chalk.yellow(`Warning: Could not load config from ${CONFIG_PATH}: ${(error as Error).message}`));
   }
   return {};
 }

@@ -6,6 +6,7 @@ import { api } from '@/lib/api-client';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import { Button } from '@/components/shared/Button';
 import { Modal } from '@/components/shared/Modal';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { FormField, inputClassName, selectClassName } from '@/components/shared/FormField';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { useNotificationStore } from '@/stores/notifications';
@@ -40,6 +41,7 @@ export default function AgentsPage() {
   const notify = useNotificationStore((s) => s.addNotification);
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<RegisterFormState>(initialForm);
+  const [confirmAction, setConfirmAction] = useState<{ type: 'pause' | 'resume' | 'stop'; agentId: string; agentName: string } | null>(null);
 
   const { data: agents, isLoading, error } = useQuery({
     queryKey: ['agents'],
@@ -64,27 +66,39 @@ export default function AgentsPage() {
     mutationFn: (id: string) => api.agents.pause(id),
     onSuccess: () => {
       notify('success', 'Agent paused');
+      setConfirmAction(null);
       queryClient.invalidateQueries({ queryKey: ['agents'] });
     },
-    onError: (err: Error) => notify('error', 'Failed to pause agent', err.message),
+    onError: (err: Error) => {
+      notify('error', 'Failed to pause agent', err.message);
+      setConfirmAction(null);
+    },
   });
 
   const resumeMutation = useMutation({
     mutationFn: (id: string) => api.agents.resume(id),
     onSuccess: () => {
       notify('success', 'Agent resumed');
+      setConfirmAction(null);
       queryClient.invalidateQueries({ queryKey: ['agents'] });
     },
-    onError: (err: Error) => notify('error', 'Failed to resume agent', err.message),
+    onError: (err: Error) => {
+      notify('error', 'Failed to resume agent', err.message);
+      setConfirmAction(null);
+    },
   });
 
   const stopMutation = useMutation({
     mutationFn: (id: string) => api.agents.stop(id),
     onSuccess: () => {
       notify('success', 'Agent stopped');
+      setConfirmAction(null);
       queryClient.invalidateQueries({ queryKey: ['agents'] });
     },
-    onError: (err: Error) => notify('error', 'Failed to stop agent', err.message),
+    onError: (err: Error) => {
+      notify('error', 'Failed to stop agent', err.message);
+      setConfirmAction(null);
+    },
   });
 
   // ── Form helpers ───────────────────────────────────────────
@@ -184,16 +198,14 @@ export default function AgentsPage() {
                     <Button
                       variant="secondary"
                       size="sm"
-                      onClick={() => pauseMutation.mutate(agent.id)}
-                      loading={pauseMutation.isPending}
+                      onClick={() => setConfirmAction({ type: 'pause', agentId: agent.id, agentName: agent.name })}
                     >
                       Pause
                     </Button>
                     <Button
                       variant="danger"
                       size="sm"
-                      onClick={() => stopMutation.mutate(agent.id)}
-                      loading={stopMutation.isPending}
+                      onClick={() => setConfirmAction({ type: 'stop', agentId: agent.id, agentName: agent.name })}
                     >
                       Stop
                     </Button>
@@ -204,16 +216,14 @@ export default function AgentsPage() {
                     <Button
                       variant="primary"
                       size="sm"
-                      onClick={() => resumeMutation.mutate(agent.id)}
-                      loading={resumeMutation.isPending}
+                      onClick={() => setConfirmAction({ type: 'resume', agentId: agent.id, agentName: agent.name })}
                     >
                       Resume
                     </Button>
                     <Button
                       variant="danger"
                       size="sm"
-                      onClick={() => stopMutation.mutate(agent.id)}
-                      loading={stopMutation.isPending}
+                      onClick={() => setConfirmAction({ type: 'stop', agentId: agent.id, agentName: agent.name })}
                     >
                       Stop
                     </Button>
@@ -223,8 +233,7 @@ export default function AgentsPage() {
                   <Button
                     variant="primary"
                     size="sm"
-                    onClick={() => resumeMutation.mutate(agent.id)}
-                    loading={resumeMutation.isPending}
+                    onClick={() => setConfirmAction({ type: 'resume', agentId: agent.id, agentName: agent.name })}
                   >
                     Resume
                   </Button>
@@ -344,6 +353,35 @@ export default function AgentsPage() {
           </div>
         </div>
       </Modal>
+
+      {/* Agent Action Confirmation Dialog */}
+      {confirmAction && (
+        <ConfirmDialog
+          open={!!confirmAction}
+          onClose={() => setConfirmAction(null)}
+          onConfirm={() => {
+            const { type, agentId } = confirmAction;
+            if (type === 'pause') pauseMutation.mutate(agentId);
+            else if (type === 'resume') resumeMutation.mutate(agentId);
+            else if (type === 'stop') stopMutation.mutate(agentId);
+          }}
+          title={
+            confirmAction.type === 'pause' ? 'Pause Agent'
+            : confirmAction.type === 'resume' ? 'Resume Agent'
+            : 'Stop Agent'
+          }
+          message={
+            confirmAction.type === 'pause'
+              ? `Are you sure you want to pause "${confirmAction.agentName}"? The agent will stop processing new turns until resumed.`
+            : confirmAction.type === 'resume'
+              ? `Resume agent "${confirmAction.agentName}"? The agent will begin processing turns again.`
+              : `Are you sure you want to stop "${confirmAction.agentName}"? Any in-progress work will be terminated.`
+          }
+          confirmLabel={confirmAction.type === 'stop' ? 'Stop Agent' : confirmAction.type === 'pause' ? 'Pause' : 'Resume'}
+          variant={confirmAction.type === 'stop' ? 'danger' : confirmAction.type === 'pause' ? 'warning' : 'default'}
+          loading={pauseMutation.isPending || resumeMutation.isPending || stopMutation.isPending}
+        />
+      )}
     </div>
   );
 }
