@@ -53,8 +53,17 @@ export class MCPClient implements IMCPClient {
   private rl: readline.Interface | null = null;
   private stderrRl: readline.Interface | null = null;
 
+  // HTTP transport state: track in-flight requests for graceful shutdown
+  private inFlightControllers = new Set<AbortController>();
+
+  // Concurrency limiting for tool calls
+  private readonly maxConcurrentCalls: number;
+  private activeCalls = 0;
+  private callQueue: Array<() => void> = [];
+
   constructor(config: MCPClientConfig) {
     this.config = config;
+    this.maxConcurrentCalls = config.maxConcurrentCalls ?? 10;
   }
 
   async connect(): Promise<void> {
@@ -79,6 +88,12 @@ export class MCPClient implements IMCPClient {
 
     this.connected = false;
     this.rejectAllPending(new Error('Client disconnected'));
+
+    // Abort any in-flight HTTP requests
+    for (const controller of this.inFlightControllers) {
+      controller.abort();
+    }
+    this.inFlightControllers.clear();
 
     if (this.stderrRl) {
       this.stderrRl.close();
@@ -106,11 +121,25 @@ export class MCPClient implements IMCPClient {
   }
 
   async callTool(call: MCPToolCall): Promise<MCPToolResult> {
-    const result = (await this.sendRequest('tools/call', {
-      name: call.name,
-      arguments: call.arguments,
-    })) as MCPToolResult;
-    return result;
+    // Wait for a concurrency slot
+    if (this.activeCalls >= this.maxConcurrentCalls) {
+      await new Promise<void>((resolve) => {
+        this.callQueue.push(resolve);
+      });
+    }
+    this.activeCalls++;
+
+    try {
+      const result = (await this.sendRequest('tools/call', {
+        name: call.name,
+        arguments: call.arguments,
+      })) as MCPToolResult;
+      return result;
+    } finally {
+      this.activeCalls--;
+      const next = this.callQueue.shift();
+      if (next) next();
+    }
   }
 
   isConnected(): boolean {
@@ -199,6 +228,9 @@ export class MCPClient implements IMCPClient {
     this.negotiatedVersion = (initResult.protocolVersion as string) ?? PREFERRED_PROTOCOL_VERSION;
     this.serverCapabilities = (initResult.capabilities as Record<string, unknown>) ?? {};
     logger.info(`Server initialized (protocol: ${this.negotiatedVersion}): ${JSON.stringify(initResult.serverInfo)}`);
+
+    // Send initialized notification
+    this.sendNotification('notifications/initialized', {});
   }
 
   private rejectAllPending(error: Error): void {
@@ -332,6 +364,7 @@ export class MCPClient implements IMCPClient {
     }
 
     const controller = new AbortController();
+    this.inFlightControllers.add(controller);
     const timeoutId = setTimeout(() => controller.abort(), MCPClient.REQUEST_TIMEOUT_MS);
 
     try {
@@ -360,6 +393,7 @@ export class MCPClient implements IMCPClient {
       return json.result;
     } finally {
       clearTimeout(timeoutId);
+      this.inFlightControllers.delete(controller);
     }
   }
 }

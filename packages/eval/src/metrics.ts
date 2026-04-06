@@ -89,6 +89,7 @@ export function LLMJudgeMetric(
   name: string,
   promptTemplate: string,
   llmAdapter: LLMAdapter,
+  model: string,
 ): EvalMetricFunction {
   return async (input: string, output: string, expected?: string): Promise<EvalScore> => {
     const filledPrompt = promptTemplate
@@ -98,7 +99,7 @@ export function LLMJudgeMetric(
 
     try {
       const response = await llmAdapter.chat({
-        model: '',
+        model,
         messages: [{ role: 'user', content: filledPrompt }],
         temperature: 0,
       });

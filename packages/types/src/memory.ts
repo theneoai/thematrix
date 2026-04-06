@@ -134,6 +134,8 @@ export interface EvalMetricConfig {
   type: string;
   /** For llm-judge: the evaluation prompt */
   prompt?: string;
+  /** For llm-judge: the model to use for evaluation */
+  model?: string;
   /** Threshold for pass/fail */
   threshold?: number;
 }

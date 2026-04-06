@@ -183,12 +183,6 @@ export class MCPServer implements IMCPServer {
         protocolVersion: this.negotiatedVersion,
         capabilities: {
           tools: {},
-          // MCP v1.27+ capability extensions
-          ...(this.negotiatedVersion === '2025-03-26' ? {
-            resources: {},
-            prompts: {},
-            logging: {},
-          } : {}),
         },
         serverInfo: {
           name: this.config.name,
@@ -235,6 +229,43 @@ export class MCPServer implements IMCPServer {
         id,
         error: { code: -32602, message: `Unknown tool: ${toolName}` },
       };
+    }
+
+    // Basic input validation against declared inputSchema
+    const schema = entry.tool.inputSchema;
+    if (schema && typeof schema === 'object') {
+      const schemaObj = schema as Record<string, unknown>;
+      // Check required properties
+      if (Array.isArray(schemaObj.required)) {
+        const missing = (schemaObj.required as string[]).filter(
+          (key) => !(key in toolArgs),
+        );
+        if (missing.length > 0) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            error: {
+              code: -32602,
+              message: `Missing required argument(s): ${missing.join(', ')}`,
+            },
+          };
+        }
+      }
+      // Check for unknown properties (only when additionalProperties is not explicitly allowed)
+      if (schemaObj.properties && typeof schemaObj.properties === 'object' && schemaObj.additionalProperties !== true) {
+        const knownKeys = new Set(Object.keys(schemaObj.properties as object));
+        const unknownKeys = Object.keys(toolArgs).filter((k) => !knownKeys.has(k));
+        if (unknownKeys.length > 0) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            error: {
+              code: -32602,
+              message: `Unknown argument(s): ${unknownKeys.join(', ')}`,
+            },
+          };
+        }
+      }
     }
 
     try {
