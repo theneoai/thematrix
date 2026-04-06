@@ -69,6 +69,7 @@ export default function SettingsPage() {
   const [deletingPolicyId, setDeletingPolicyId] = useState<string | null>(null);
   const [expandedEnv, setExpandedEnv] = useState<string | null>(null);
   const [expandedSuiteRunId, setExpandedSuiteRunId] = useState<string | null>(null);
+  const [expandedSuiteId, setExpandedSuiteId] = useState<string | null>(null);
   const [guardrailModalOpen, setGuardrailModalOpen] = useState(false);
   const [editingGuardrailId, setEditingGuardrailId] = useState<string | null>(null);
   const [guardrailForm, setGuardrailForm] = useState({ name: '', type: 'both' as const, action: 'block' as const, pattern: '', description: '' });
@@ -141,9 +142,10 @@ export default function SettingsPage() {
 
   const runEval = useMutation({
     mutationFn: (suiteId: string) => api.eval.run(suiteId),
-    onSuccess: (data) => {
+    onSuccess: (data, suiteId) => {
       queryClient.invalidateQueries({ queryKey: ['eval-suites'] });
       setExpandedSuiteRunId(data.runId);
+      setExpandedSuiteId(suiteId);
       notify('success', 'Evaluation started');
     },
     onError: () => notify('error', 'Failed to start evaluation'),
@@ -636,13 +638,13 @@ export default function SettingsPage() {
                 </div>
 
                 {/* Expanded results */}
-                {expandedSuiteRunId && (
+                {expandedSuiteRunId && expandedSuiteId === suite.id && (
                   <EvalResultsPanel
                     runId={expandedSuiteRunId}
                     suiteId={suite.id}
                     results={evalResults.data}
                     isLoading={evalResults.isLoading}
-                    onClose={() => setExpandedSuiteRunId(null)}
+                    onClose={() => { setExpandedSuiteRunId(null); setExpandedSuiteId(null); }}
                   />
                 )}
               </div>

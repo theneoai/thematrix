@@ -35,7 +35,7 @@ export default function ProvidersPage() {
   });
 
   // ── Queries ────────────────────────────────────────────────────────────────
-  const { data: providers } = useQuery({
+  const { data: providers, isLoading: providersLoading, error: providersError } = useQuery({
     queryKey: ['providers'],
     queryFn: api.providers.list,
   });
@@ -46,7 +46,7 @@ export default function ProvidersPage() {
     refetchInterval: 30_000,
   });
 
-  const { data: tokenUsage, error: tokenError } = useQuery({
+  const { data: tokenUsage, isLoading: tokenLoading, error: tokenError } = useQuery({
     queryKey: ['token-usage'],
     queryFn: api.tokens.usage,
   });
@@ -162,6 +162,18 @@ export default function ProvidersPage() {
   return (
     <div className="space-y-8">
       <h1 className="text-2xl font-semibold text-foreground">Model Providers & Token Pool</h1>
+
+      {(providersLoading || tokenLoading) && (
+        <div className="rounded-lg border border-border bg-background-secondary p-8 text-center text-foreground-subtle">
+          Loading providers and token data...
+        </div>
+      )}
+
+      {providersError && (
+        <div className="rounded-lg border border-border bg-background-secondary p-8 text-center text-error">
+          Failed to load providers: {providersError.message}
+        </div>
+      )}
 
       {tokenError && (
         <div className="rounded-lg border border-border bg-background-secondary p-8 text-center text-error">

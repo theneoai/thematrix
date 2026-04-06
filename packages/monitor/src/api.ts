@@ -334,6 +334,7 @@ export class MonitorAPI {
 
     // Domain events
     this.route('GET', '/api/events', this.handleListEvents.bind(this));
+    this.route('GET', '/api/events/stream', this.handleEventStream.bind(this));
 
     // Metrics & Health
     this.route('GET', '/metrics', this.handleMetrics.bind(this));
@@ -419,7 +420,7 @@ export class MonitorAPI {
   private async handleListWorkflows(_req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!this.providers.getWorkflowRuns) return this.sendNotImplemented(res);
     const runs = await this.providers.getWorkflowRuns();
-    this.sendJson(res, 200, { workflows: runs });
+    this.sendJson(res, 200, runs);
   }
 
   private async handleGetWorkflow(_req: IncomingMessage, res: ServerResponse, params: Record<string, string>): Promise<void> {
@@ -432,13 +433,13 @@ export class MonitorAPI {
   private async handleGetWorkflowEvents(_req: IncomingMessage, res: ServerResponse, params: Record<string, string>): Promise<void> {
     if (!this.providers.getWorkflowEvents) return this.sendNotImplemented(res);
     const events = await this.providers.getWorkflowEvents(params.runId);
-    this.sendJson(res, 200, { events });
+    this.sendJson(res, 200, events);
   }
 
   private async handleListAgents(_req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!this.providers.getAgents) return this.sendNotImplemented(res);
     const agents = await this.providers.getAgents();
-    this.sendJson(res, 200, { agents });
+    this.sendJson(res, 200, agents);
   }
 
   private async handleGetAgent(_req: IncomingMessage, res: ServerResponse, params: Record<string, string>): Promise<void> {
@@ -464,7 +465,7 @@ export class MonitorAPI {
   private async handleClusterNodes(_req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!this.providers.getClusterNodes) return this.sendNotImplemented(res);
     const nodes = await this.providers.getClusterNodes();
-    this.sendJson(res, 200, { nodes });
+    this.sendJson(res, 200, nodes);
   }
 
   private async handleClusterHealth(_req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -476,25 +477,25 @@ export class MonitorAPI {
   private async handleListTriggers(_req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!this.providers.getTriggers) return this.sendNotImplemented(res);
     const triggers = await this.providers.getTriggers();
-    this.sendJson(res, 200, { triggers });
+    this.sendJson(res, 200, triggers);
   }
 
   private async handleListSchedules(_req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!this.providers.getSchedules) return this.sendNotImplemented(res);
     const schedules = await this.providers.getSchedules();
-    this.sendJson(res, 200, { schedules });
+    this.sendJson(res, 200, schedules);
   }
 
   private async handleListAlerts(_req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!this.providers.getActiveAlerts) return this.sendNotImplemented(res);
     const alerts = this.providers.getActiveAlerts();
-    this.sendJson(res, 200, { alerts });
+    this.sendJson(res, 200, alerts);
   }
 
   private async handleListAlertRules(_req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!this.providers.getAlertRules) return this.sendNotImplemented(res);
     const rules = this.providers.getAlertRules();
-    this.sendJson(res, 200, { rules });
+    this.sendJson(res, 200, rules);
   }
 
   private async handleMetrics(_req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -519,7 +520,7 @@ export class MonitorAPI {
   private async handleListApprovals(_req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!this.providers.approvalManager) return this.sendNotImplemented(res);
     const approvals = this.providers.approvalManager.listPending();
-    this.sendJson(res, 200, { approvals });
+    this.sendJson(res, 200, approvals);
   }
 
   private async handleGetApproval(_req: IncomingMessage, res: ServerResponse, params: Record<string, string>): Promise<void> {
@@ -853,7 +854,7 @@ export class MonitorAPI {
   private async handleAlertHistory(_req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!this.providers.getAlertHistory) return this.sendNotImplemented(res);
     const history = this.providers.getAlertHistory();
-    this.sendJson(res, 200, { alerts: history });
+    this.sendJson(res, 200, history);
   }
 
   private async handleAcknowledgeAlert(_req: IncomingMessage, res: ServerResponse, params: Record<string, string>): Promise<void> {
@@ -1092,6 +1093,44 @@ export class MonitorAPI {
   private async handleListEvents(_req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!this.providers.getEvents) return this.sendNotImplemented(res);
     const events = await this.providers.getEvents();
-    this.sendJson(res, 200, { events });
+    this.sendJson(res, 200, events);
+  }
+
+  private async handleEventStream(_req: IncomingMessage, res: ServerResponse): Promise<void> {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    });
+
+    // Send initial comment to confirm connection
+    res.write(': connected\n\n');
+
+    // Heartbeat every 30 seconds
+    const heartbeat = setInterval(() => {
+      res.write(': heartbeat\n\n');
+    }, 30_000);
+
+    // Forward events from the event bus if available
+    const eventBus = (this.providers as Record<string, unknown>).eventBus as
+      | { on(event: string, listener: (event: DomainEvent) => void): void; off(event: string, listener: (event: DomainEvent) => void): void }
+      | undefined;
+
+    const onEvent = (event: DomainEvent) => {
+      res.write(`data: ${JSON.stringify(event)}\n\n`);
+    };
+
+    if (eventBus) {
+      eventBus.on('event', onEvent);
+    }
+
+    // Clean up on close
+    _req.on('close', () => {
+      clearInterval(heartbeat);
+      if (eventBus) {
+        eventBus.off('event', onEvent);
+      }
+      res.end();
+    });
   }
 }
