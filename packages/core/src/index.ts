@@ -53,3 +53,9 @@ export * from './environment/index.js';
 
 // Runtime
 export * from './runtime/index.js';
+
+// Telemetry (OpenTelemetry integration)
+export * from './telemetry/index.js';
+
+// Cognitive Memory
+export * from './memory/cognitive.js';

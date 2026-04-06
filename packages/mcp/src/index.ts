@@ -12,3 +12,7 @@ export { MCPServer } from './server.js';
 export { MCPClient } from './client.js';
 export { exposeWorkflows, type IWorkflowEngine } from './workflow-tools.js';
 export { connectExternalTools, type ToolHandler } from './agent-tools.js';
+
+// A2A Protocol
+export { A2AClient } from './a2a-client.js';
+export { A2AServer, AgentRegistry, type A2AServerConfig } from './a2a-server.js';
