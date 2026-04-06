@@ -13,11 +13,19 @@ import type {
   DomainEvent,
   GuardrailConfig,
   ResponseFormat,
+  ITelemetryProvider,
+  ICognitiveMemoryManager,
 } from '@thematrix/types';
 import { EventTypes, type IEventBus } from '@thematrix/types';
 import { Logger, generateAgentInstanceId, withRetry, timeout } from '@thematrix/utils';
 import { generateId } from '@thematrix/utils';
 import { GuardrailRunner, OutputValidator } from '../guardrails/index.js';
+import {
+  traceAgentTurn,
+  traceLLMCall,
+  recordLLMTokenUsage,
+  traceToolCall,
+} from '../telemetry/instrumentation.js';
 
 const logger = new Logger({ prefix: 'AgentRuntime' });
 
@@ -32,6 +40,10 @@ export interface AgentRuntimeOptions {
   guardrails?: GuardrailConfig[];
   /** Output schema for structured output validation (overrides definition.outputSchema if provided) */
   outputSchema?: Record<string, unknown>;
+  /** Telemetry provider for distributed tracing (optional, noop if not provided) */
+  telemetry?: ITelemetryProvider;
+  /** Cognitive memory manager for episodic/procedural recording (optional) */
+  cognitiveMemory?: ICognitiveMemoryManager;
 }
 
 export type ToolHandler = (args: Record<string, unknown>) => Promise<unknown>;
@@ -50,6 +62,8 @@ export class AgentRuntime {
   private outputValidator: OutputValidator;
   private guardrails: GuardrailConfig[];
   private outputSchema?: Record<string, unknown>;
+  private telemetry?: ITelemetryProvider;
+  private cognitiveMemory?: ICognitiveMemoryManager;
   private metrics = {
     startTime: undefined as Date | undefined,
     endTime: undefined as Date | undefined,
@@ -68,6 +82,8 @@ export class AgentRuntime {
     this.tools = options.tools ?? new Map();
     this.guardrails = options.guardrails ?? options.definition.guardrails ?? [];
     this.outputSchema = options.outputSchema ?? options.definition.outputSchema;
+    this.telemetry = options.telemetry;
+    this.cognitiveMemory = options.cognitiveMemory;
     this.guardrailRunner = new GuardrailRunner(options.eventBus, options.llmAdapter, options.workflowRunId);
     this.outputValidator = new OutputValidator();
   }
@@ -95,13 +111,19 @@ export class AgentRuntime {
     }
 
     this.metrics.totalTurns++;
-    
+
     const turnId = generateId();
     await this.publishEvent(EventTypes.AGENT_TURN_STARTED, {
       agentId: this.definition.id,
       instanceId: this.instanceId,
       turnId,
     });
+
+    // Start telemetry span for the entire turn
+    const turnSpan = this.telemetry
+      ? traceAgentTurn(this.telemetry, this.definition.id, this.definition.name, this.definition.model.model, this.definition.model.provider)
+      : undefined;
+    const turnStartTime = Date.now();
 
     try {
       // ── Input guardrails ──────────────────────────────────────
@@ -158,7 +180,11 @@ export class AgentRuntime {
         };
       }
 
-      // Call LLM
+      // Call LLM (with telemetry span)
+      const llmSpan = this.telemetry
+        ? traceLLMCall(this.telemetry, this.definition.model.model, this.definition.model.provider)
+        : undefined;
+
       const response = await withRetry(
         () => timeout(
           this.llmAdapter.chat({
@@ -176,6 +202,12 @@ export class AgentRuntime {
           retryDelayMs: 1000,
         }
       );
+
+      if (llmSpan) {
+        recordLLMTokenUsage(llmSpan, response.usage.promptTokens, response.usage.completionTokens);
+        llmSpan.setStatus({ code: 'ok' });
+        llmSpan.end();
+      }
 
       this.metrics.totalTokens += response.usage.totalTokens;
 
@@ -229,6 +261,10 @@ export class AgentRuntime {
           })),
         ];
 
+        const loopLlmSpan = this.telemetry
+          ? traceLLMCall(this.telemetry, this.definition.model.model, this.definition.model.provider)
+          : undefined;
+
         currentResponse = await withRetry(
           () => timeout(
             this.llmAdapter.chat({
@@ -243,6 +279,12 @@ export class AgentRuntime {
           ),
           { maxRetries: 2, retryDelayMs: 1000 }
         );
+
+        if (loopLlmSpan) {
+          recordLLMTokenUsage(loopLlmSpan, currentResponse.usage.promptTokens, currentResponse.usage.completionTokens);
+          loopLlmSpan.setStatus({ code: 'ok' });
+          loopLlmSpan.end();
+        }
 
         this.metrics.totalTokens += currentResponse.usage.totalTokens;
         finalContent = currentResponse.content;
@@ -331,6 +373,30 @@ export class AgentRuntime {
         timestamp: new Date(),
       });
 
+      // End telemetry turn span (success)
+      if (turnSpan) {
+        turnSpan.setStatus({ code: 'ok' });
+        turnSpan.end();
+      }
+
+      // Record cognitive memory episode (success)
+      if (this.cognitiveMemory) {
+        const toolsUsed = currentResponse.toolCalls?.map(tc => tc.function.name) ?? [];
+        this.cognitiveMemory.recordEpisode({
+          agentId: this.definition.id,
+          eventType: 'task-completion',
+          summary: input.slice(0, 200),
+          context: {
+            workflowRunId: this.workflowRunId,
+            input: input.slice(0, 500),
+            output: finalContent.slice(0, 500),
+            toolsUsed: toolsUsed.length > 0 ? toolsUsed : undefined,
+          },
+          outcome: 'success',
+          importance: 0.5,
+        }).catch(err => logger.warn(`Failed to record episode: ${err instanceof Error ? err.message : String(err)}`));
+      }
+
       await this.publishEvent(EventTypes.AGENT_TURN_COMPLETED, {
         agentId: this.definition.id,
         instanceId: this.instanceId,
@@ -342,14 +408,37 @@ export class AgentRuntime {
     } catch (error) {
       this.metrics.errors++;
       this.status = 'error';
-      
+
+      // End telemetry turn span (error)
+      if (turnSpan) {
+        turnSpan.setStatus({ code: 'error', message: error instanceof Error ? error.message : String(error) });
+        if (error instanceof Error) turnSpan.recordException(error);
+        turnSpan.end();
+      }
+
+      // Record cognitive memory episode (failure)
+      if (this.cognitiveMemory) {
+        this.cognitiveMemory.recordEpisode({
+          agentId: this.definition.id,
+          eventType: 'error-recovery',
+          summary: input.slice(0, 200),
+          context: {
+            workflowRunId: this.workflowRunId,
+            input: input.slice(0, 500),
+          },
+          outcome: 'failure',
+          lessons: [error instanceof Error ? error.message : String(error)],
+          importance: 0.8,
+        }).catch(err => logger.warn(`Failed to record episode: ${err instanceof Error ? err.message : String(err)}`));
+      }
+
       await this.publishEvent(EventTypes.AGENT_ERROR, {
         agentId: this.definition.id,
         instanceId: this.instanceId,
         turnId,
         error: error instanceof Error ? error.message : String(error),
       });
-      
+
       throw error;
     }
   }
@@ -368,9 +457,12 @@ export class AgentRuntime {
         continue;
       }
 
+      const toolSpan = this.telemetry ? traceToolCall(this.telemetry, call.function.name) : undefined;
+
       try {
         const args = JSON.parse(call.function.arguments);
         if (typeof args !== 'object' || args === null || Array.isArray(args)) {
+          if (toolSpan) { toolSpan.setStatus({ code: 'error', message: 'Invalid arguments type' }); toolSpan.end(); }
           results.push({
             toolCallId: call.id,
             content: `Error: Tool arguments must be a JSON object, got ${Array.isArray(args) ? 'array' : typeof args}`,
@@ -378,11 +470,13 @@ export class AgentRuntime {
           continue;
         }
         const result = await handler(args);
+        if (toolSpan) { toolSpan.setStatus({ code: 'ok' }); toolSpan.end(); }
         results.push({
           toolCallId: call.id,
           content: JSON.stringify(result),
         });
       } catch (error) {
+        if (toolSpan) { toolSpan.setStatus({ code: 'error', message: error instanceof Error ? error.message : String(error) }); toolSpan.end(); }
         results.push({
           toolCallId: call.id,
           content: `Error: ${error instanceof Error ? error.message : String(error)}`,
