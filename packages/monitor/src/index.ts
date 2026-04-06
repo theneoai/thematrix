@@ -11,6 +11,14 @@ export type {
   TokenBudget,
   TriggerRuleSummary,
   ScheduleSummary,
+  ProviderSummary,
+  ProviderHealthSummary,
+  GuardrailSummary,
+  GuardrailViolationSummary,
+  PolicySummary,
+  EnvironmentSummary,
+  EvalSuiteSummary,
+  EvalResultSummary,
 } from './api.js';
 
 export { SSEManager } from './websocket.js';

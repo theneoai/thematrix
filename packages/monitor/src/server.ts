@@ -46,6 +46,9 @@ export class MonitorServer implements IMonitorServer {
       ...options.providers,
       getActiveAlerts: () => this.alerts.getActiveAlerts(),
       getAlertRules: () => this.alerts.getRules(),
+      getAlertHistory: (limit?: number) => this.alerts.getAlertHistory(limit),
+      acknowledgeAlert: async (id: string) => { this.alerts.acknowledgeAlert(id); },
+      resolveAlert: async (id: string) => { this.alerts.resolveAlert(id); },
       getMetrics: options.providers?.getMetrics ?? (() => this.buildDefaultMetrics()),
     };
 

@@ -41,6 +41,8 @@ export default function TriggersPage() {
   const [triggerModalOpen, setTriggerModalOpen] = useState(false);
   const [editingTrigger, setEditingTrigger] = useState<TriggerRuleInfo | null>(null);
   const [triggerForm, setTriggerForm] = useState<TriggerRuleInput>(emptyTriggerForm);
+  const [triggerConditionsJson, setTriggerConditionsJson] = useState('');
+  const [triggerMappingJson, setTriggerMappingJson] = useState('');
   const [deletingTriggerId, setDeletingTriggerId] = useState<string | null>(null);
 
   // ── Schedule modal state ──────────────────────────────────────
@@ -136,6 +138,8 @@ export default function TriggersPage() {
   function openAddTrigger() {
     setEditingTrigger(null);
     setTriggerForm(emptyTriggerForm);
+    setTriggerConditionsJson('');
+    setTriggerMappingJson('');
     setTriggerModalOpen(true);
   }
 
@@ -158,10 +162,32 @@ export default function TriggersPage() {
   }
 
   function handleTriggerSubmit() {
+    let conditions: TriggerRuleInput['conditions'];
+    let inputMapping: TriggerRuleInput['inputMapping'];
+
+    if (triggerConditionsJson.trim()) {
+      try {
+        conditions = JSON.parse(triggerConditionsJson);
+      } catch {
+        notify('error', 'Invalid JSON in conditions field');
+        return;
+      }
+    }
+    if (triggerMappingJson.trim()) {
+      try {
+        inputMapping = JSON.parse(triggerMappingJson);
+      } catch {
+        notify('error', 'Invalid JSON in input mapping field');
+        return;
+      }
+    }
+
+    const payload: TriggerRuleInput = { ...triggerForm, conditions, inputMapping };
+
     if (editingTrigger) {
-      updateTrigger.mutate({ id: editingTrigger.id, rule: triggerForm });
+      updateTrigger.mutate({ id: editingTrigger.id, rule: payload });
     } else {
-      createTrigger.mutate(triggerForm);
+      createTrigger.mutate(payload);
     }
   }
 
@@ -472,6 +498,34 @@ export default function TriggersPage() {
               />
             </FormField>
           </div>
+
+          <FormField
+            label="Conditions (JSON)"
+            htmlFor="trigger-conditions"
+            hint='Optional JSON array of conditions: [{"field":"$.type","operator":"eq","value":"merge"}]'
+          >
+            <textarea
+              id="trigger-conditions"
+              className={inputClassName + ' min-h-[60px] font-mono text-xs'}
+              value={triggerConditionsJson}
+              onChange={(e) => setTriggerConditionsJson(e.target.value)}
+              placeholder='[{"field": "$.type", "operator": "eq", "value": "merge"}]'
+            />
+          </FormField>
+
+          <FormField
+            label="Input Mapping (JSON)"
+            htmlFor="trigger-mapping"
+            hint='Map webhook fields to workflow inputs: {"repo":"$.repository.name"}'
+          >
+            <textarea
+              id="trigger-mapping"
+              className={inputClassName + ' min-h-[60px] font-mono text-xs'}
+              value={triggerMappingJson}
+              onChange={(e) => setTriggerMappingJson(e.target.value)}
+              placeholder='{"repo": "$.repository.name", "branch": "$.ref"}'
+            />
+          </FormField>
         </div>
       </Modal>
 

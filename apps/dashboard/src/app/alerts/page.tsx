@@ -42,13 +42,21 @@ const emptyForm: RuleFormData = {
   enabled: true,
 };
 
+type AlertTab = 'active' | 'history' | 'rules';
+
 export default function AlertsPage() {
   const queryClient = useQueryClient();
   const notify = useNotificationStore((s) => s.addNotification);
+  const [activeTab, setActiveTab] = useState<AlertTab>('active');
 
   const { data: alerts, isLoading: alertsLoading, error: alertsError } = useQuery({
     queryKey: ['alerts'],
     queryFn: api.alerts.active,
+  });
+  const { data: alertHistory, isLoading: historyLoading } = useQuery({
+    queryKey: ['alert-history'],
+    queryFn: api.alerts.history,
+    enabled: activeTab === 'history',
   });
   const { data: rules, isLoading: rulesLoading, error: rulesError } = useQuery({
     queryKey: ['alert-rules'],
@@ -176,8 +184,34 @@ export default function AlertsPage() {
     <div className="space-y-8">
       <h1 className="text-2xl font-semibold text-foreground">Alerts & Notifications</h1>
 
+      {/* Tab Navigation */}
+      <div className="flex gap-1 rounded-lg bg-background-tertiary p-1">
+        {([
+          { key: 'active' as const, label: 'Active Alerts', count: alerts?.length },
+          { key: 'history' as const, label: 'History' },
+          { key: 'rules' as const, label: 'Alert Rules', count: rules?.length },
+        ]).map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+              activeTab === tab.key
+                ? 'bg-background-secondary text-foreground shadow-sm'
+                : 'text-foreground-muted hover:text-foreground'
+            }`}
+          >
+            {tab.label}
+            {tab.count ? (
+              <span className="ml-1.5 rounded-full bg-error/20 px-1.5 py-0.5 text-[10px] text-error">
+                {tab.count}
+              </span>
+            ) : null}
+          </button>
+        ))}
+      </div>
+
       {/* ========== Active Alerts ========== */}
-      <section>
+      {activeTab === 'active' && <section>
         <h2 className="text-lg font-medium mb-4 text-foreground">
           Active Alerts
           {alerts?.length ? (
@@ -242,10 +276,50 @@ export default function AlertsPage() {
             ))}
           </div>
         )}
-      </section>
+      </section>}
+
+      {/* ========== Alert History ========== */}
+      {activeTab === 'history' && (
+        <section>
+          <h2 className="text-lg font-medium mb-4 text-foreground">Alert History</h2>
+          {historyLoading ? (
+            <div className="rounded-lg border border-border bg-background-secondary p-8 text-center text-foreground-subtle">
+              Loading history...
+            </div>
+          ) : !alertHistory?.length ? (
+            <div className="rounded-lg border border-border bg-background-secondary p-8 text-center text-foreground-subtle">
+              No alert history found.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {alertHistory.map((alert) => (
+                <div key={alert.id} className="rounded-lg border border-border bg-background-secondary p-4">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-3">
+                      <span className={`text-lg ${severityColors[alert.severity] ?? 'text-accent'}`}>
+                        {severityIcon(alert.severity)}
+                      </span>
+                      <div>
+                        <h3 className="font-medium text-foreground">{alert.title}</h3>
+                        <p className="text-xs text-foreground-muted mt-0.5">{alert.message}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <StatusBadge status={alert.status} />
+                      <span className="text-xs text-foreground-subtle">
+                        {new Date(alert.firedAt).toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       {/* ========== Alert Rules ========== */}
-      <section>
+      {activeTab === 'rules' && <section>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-medium text-foreground">Alert Rules</h2>
           <Button variant="primary" onClick={openCreateModal}>
@@ -332,7 +406,7 @@ export default function AlertsPage() {
             </tbody>
           </table>
         </div>
-      </section>
+      </section>}
 
       {/* ========== Create / Edit Rule Modal ========== */}
       <Modal

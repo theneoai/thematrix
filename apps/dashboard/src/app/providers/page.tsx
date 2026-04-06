@@ -219,6 +219,20 @@ export default function ProvidersPage() {
                     {provider.models.length} model{provider.models.length !== 1 ? 's' : ''} available
                   </div>
 
+                  {provider.models.length > 0 && (
+                    <div className="max-h-24 overflow-y-auto space-y-0.5">
+                      {provider.models.map((m) => (
+                        <div
+                          key={m.id}
+                          className="flex items-center justify-between text-[10px] text-foreground-muted px-1.5 py-0.5 rounded bg-background-tertiary"
+                        >
+                          <span className="font-mono truncate" title={m.id}>{m.name}</span>
+                          <span className="shrink-0 ml-2 text-foreground-subtle">{(m.contextWindow / 1000).toFixed(0)}K</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   <Button
                     size="sm"
                     variant="secondary"

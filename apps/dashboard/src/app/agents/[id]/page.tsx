@@ -6,6 +6,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import { Button } from '@/components/shared/Button';
+import { Modal } from '@/components/shared/Modal';
+import { FormField, inputClassName, selectClassName } from '@/components/shared/FormField';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { useNotificationStore } from '@/stores/notifications';
 import Link from 'next/link';
@@ -65,6 +67,13 @@ export default function AgentDetailPage() {
   const notify = useNotificationStore((s) => s.addNotification);
 
   const [confirmAction, setConfirmAction] = useState<'pause' | 'resume' | 'stop' | 'unregister' | null>(null);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editForm, setEditForm] = useState({
+    role: '',
+    personality: '',
+    systemPrompt: '',
+    maxTokens: '',
+  });
 
   const {
     data: agent,
@@ -118,6 +127,18 @@ export default function AgentDetailPage() {
     onError: (err: Error) => {
       notify('error', 'Failed to stop agent', err.message);
       setConfirmAction(null);
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: (update: Record<string, unknown>) => api.agents.update(agentId, update),
+    onSuccess: () => {
+      notify('success', 'Agent updated');
+      setEditModalOpen(false);
+      invalidate();
+    },
+    onError: (err: Error) => {
+      notify('error', 'Failed to update agent', err.message);
     },
   });
 
@@ -242,6 +263,21 @@ export default function AgentDetailPage() {
               Resume
             </Button>
           )}
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              setEditForm({
+                role: agent.persona.role,
+                personality: agent.persona.personality ?? '',
+                systemPrompt: agent.persona.systemPrompt ?? '',
+                maxTokens: '',
+              });
+              setEditModalOpen(true);
+            }}
+          >
+            Edit
+          </Button>
           <Button variant="danger" size="sm" onClick={() => setConfirmAction('unregister')}>
             Unregister
           </Button>
@@ -342,6 +378,80 @@ export default function AgentDetailPage() {
           )}
         </div>
       </Section>
+
+      {/* Edit Agent Modal */}
+      <Modal
+        open={editModalOpen}
+        onClose={() => setEditModalOpen(false)}
+        title={`Edit Agent: ${agent.name}`}
+        description="Update the agent's persona and configuration."
+        size="lg"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setEditModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              loading={updateMutation.isPending}
+              onClick={() => {
+                const update: Record<string, unknown> = {
+                  persona: {
+                    role: editForm.role,
+                    personality: editForm.personality,
+                    ...(editForm.systemPrompt ? { systemPrompt: editForm.systemPrompt } : {}),
+                  },
+                };
+                if (editForm.maxTokens) {
+                  update.model = { maxTokens: Number(editForm.maxTokens) };
+                }
+                updateMutation.mutate(update);
+              }}
+            >
+              Save Changes
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <FormField label="Role" htmlFor="edit-role" required>
+            <input
+              id="edit-role"
+              className={inputClassName}
+              value={editForm.role}
+              onChange={(e) => setEditForm((f) => ({ ...f, role: e.target.value }))}
+            />
+          </FormField>
+          <FormField label="Personality" htmlFor="edit-personality">
+            <textarea
+              id="edit-personality"
+              className={inputClassName}
+              rows={2}
+              value={editForm.personality}
+              onChange={(e) => setEditForm((f) => ({ ...f, personality: e.target.value }))}
+            />
+          </FormField>
+          <FormField label="System Prompt" htmlFor="edit-systemprompt">
+            <textarea
+              id="edit-systemprompt"
+              className={inputClassName + ' min-h-[80px] font-mono text-xs'}
+              rows={3}
+              value={editForm.systemPrompt}
+              onChange={(e) => setEditForm((f) => ({ ...f, systemPrompt: e.target.value }))}
+            />
+          </FormField>
+          <FormField label="Max Tokens" htmlFor="edit-tokens" hint="Leave blank to keep current setting.">
+            <input
+              id="edit-tokens"
+              type="number"
+              className={inputClassName}
+              value={editForm.maxTokens}
+              onChange={(e) => setEditForm((f) => ({ ...f, maxTokens: e.target.value }))}
+              placeholder="4096"
+            />
+          </FormField>
+        </div>
+      </Modal>
 
       {/* Confirmation Dialog */}
       {activeConfirm && (

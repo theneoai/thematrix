@@ -9,6 +9,7 @@ import { Button } from '@/components/shared/Button';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { useNotificationStore } from '@/stores/notifications';
 import type { WorkflowRunDetail, WorkflowNodeInfo, DomainEventDTO } from '@/lib/api-client';
+import { DAGVisualization } from '@/components/workflow/DAGVisualization';
 import Link from 'next/link';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -344,6 +345,16 @@ export default function WorkflowDetailPage() {
         <JsonViewer label="Input" data={workflow.input} />
         <JsonViewer label="Output" data={workflow.output} />
       </div>
+
+      {/* DAG Visualization */}
+      {workflow.nodes && workflow.nodes.length > 0 && (
+        <section>
+          <h2 className="mb-3 text-lg font-semibold text-foreground">Execution Graph</h2>
+          <div className="rounded-lg border border-border bg-background-secondary overflow-x-auto">
+            <DAGVisualization nodes={workflow.nodes} />
+          </div>
+        </section>
+      )}
 
       {/* Node List */}
       <section>
