@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { clsx } from 'clsx';
@@ -18,6 +19,11 @@ const navigation = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const [isMac, setIsMac] = useState(false);
+
+  useEffect(() => {
+    setIsMac(/Mac|iPhone|iPad/.test(navigator.userAgent));
+  }, []);
 
   return (
     <aside className="flex w-56 flex-col border-r border-border bg-background-secondary">
@@ -55,7 +61,7 @@ export function Sidebar() {
       <div className="border-t border-border p-4">
         <div className="text-xs text-foreground-subtle">
           <kbd className="rounded border border-border bg-background-tertiary px-1.5 py-0.5 text-[10px]">
-            {typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘K' : 'Ctrl+K'}
+            {isMac ? '⌘K' : 'Ctrl+K'}
           </kbd>
           <span className="ml-2">Quick search</span>
         </div>

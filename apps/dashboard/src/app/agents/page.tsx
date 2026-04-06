@@ -114,7 +114,10 @@ export default function AgentsPage() {
   }
 
   function handleRegister() {
-    if (!form.name.trim() || !form.role.trim() || !form.model.trim()) return;
+    if (!form.name.trim() || !form.role.trim() || !form.model.trim()) {
+      notify('error', 'Missing required fields', 'Name, role, and model are required.');
+      return;
+    }
 
     const tools = form.tools.trim()
       ? form.tools.split(',').map((t) => t.trim()).filter(Boolean)

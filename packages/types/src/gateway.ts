@@ -17,6 +17,7 @@ export type PlatformType =
   | 'wechat'
   | 'dingtalk'
   | 'slack'
+  | 'github'
   | 'custom';
 
 export interface ChannelAdapter {

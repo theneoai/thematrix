@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { useUIStore } from '@/stores/ui';
@@ -22,6 +23,11 @@ export function Header() {
   const openCommandPalette = useUIStore((s) => s.openCommandPalette);
   const theme = useUIStore((s) => s.theme);
   const setTheme = useUIStore((s) => s.setTheme);
+  const [isMac, setIsMac] = useState(false);
+
+  useEffect(() => {
+    setIsMac(/Mac|iPhone|iPad/.test(navigator.userAgent));
+  }, []);
 
   const { data: health, error } = useQuery({
     queryKey: ['health'],
@@ -51,7 +57,7 @@ export function Header() {
         >
           <span>Search...</span>
           <kbd className="text-[10px] border border-border rounded px-1 py-0.5">
-            {typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl+'}K
+            {isMac ? '⌘' : 'Ctrl+'}K
           </kbd>
         </button>
 

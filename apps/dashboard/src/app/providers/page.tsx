@@ -148,7 +148,10 @@ export default function ProvidersPage() {
 
   function handleBudgetSubmit() {
     const ownerId = editingBudgetOwner ?? budgetForm.ownerId;
-    if (!ownerId || !budgetForm.maxTokens) return;
+    if (!ownerId || !budgetForm.maxTokens) {
+      notify('error', 'Missing required fields', 'Owner ID and max tokens are required.');
+      return;
+    }
     const budget: Parameters<typeof api.tokens.allocateBudget>[1] = {
       maxTokens: Number(budgetForm.maxTokens),
       period: budgetForm.period,
@@ -296,7 +299,7 @@ export default function ProvidersPage() {
         </div>
 
         {budgets.length > 0 ? (
-          <div className="rounded-lg border border-border">
+          <div className="overflow-x-auto rounded-lg border border-border">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border bg-background-secondary text-left text-foreground-subtle">
@@ -359,7 +362,7 @@ export default function ProvidersPage() {
       {/* ── Usage by Owner ────────────────────────────────────────────────── */}
       <section>
         <h2 className="text-lg font-medium text-foreground mb-4">Token Usage by Owner</h2>
-        <div className="rounded-lg border border-border">
+        <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-background-secondary text-left text-foreground-subtle">

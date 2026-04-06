@@ -108,7 +108,7 @@ export const approvalConfigSchema = z.object({
 export const dagNodeSchema = z.object({
   id: z.string(),
   agentId: z.string(),
-  type: z.enum(['task', 'parallel', 'choice', 'wait', 'approval']),
+  type: z.enum(['task', 'parallel', 'choice', 'wait', 'approval', 'loop', 'sub-workflow']),
   inputMapping: z.record(z.string()).optional(),
   condition: z.string().optional(),
   retry: z.object({
@@ -135,7 +135,7 @@ export const choiceRuleSchema = z.object({
 });
 
 export const stateDefinitionSchema = z.object({
-  type: z.enum(['task', 'parallel', 'choice', 'wait', 'succeed', 'fail']),
+  type: z.enum(['task', 'parallel', 'choice', 'wait', 'succeed', 'fail', 'loop', 'sub-workflow']),
   agentId: z.string().optional(),
   inputMapping: z.record(z.string()).optional(),
   next: z.string().optional(),
@@ -334,7 +334,7 @@ export const triggerRuleSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string().optional(),
-  channel: z.enum(['gerrit', 'jira', 'gitlab', 'feishu', 'wechat', 'dingtalk', 'slack', 'custom']),
+  channel: z.enum(['gerrit', 'jira', 'gitlab', 'feishu', 'wechat', 'dingtalk', 'slack', 'github', 'custom']),
   eventType: z.string(),
   conditions: z.array(triggerConditionSchema).optional(),
   workflowId: z.string(),
@@ -421,7 +421,7 @@ export const monitorConfigSchema = z.object({
 // ============================================================
 
 export const channelConfigSchema = z.object({
-  platform: z.enum(['gerrit', 'jira', 'gitlab', 'feishu', 'wechat', 'dingtalk', 'slack', 'custom']),
+  platform: z.enum(['gerrit', 'jira', 'gitlab', 'feishu', 'wechat', 'dingtalk', 'slack', 'github', 'custom']),
   enabled: z.boolean().default(true),
   secret: z.string().optional(),
   path: z.string().optional(),
@@ -564,6 +564,13 @@ export const matrixConfigSchema = z.object({
     server: mcpServerConfigSchema.optional(),
     clients: z.array(mcpClientConfigSchema).optional(),
   }).optional(),
+  telemetry: z.object({
+    enabled: z.boolean().default(false),
+    exporter: z.enum(['otlp', 'console', 'none']).default('none'),
+    endpoint: z.string().optional(),
+    sampleRate: z.number().min(0).max(1).default(1),
+  }).optional(),
+  evals: z.array(evalSuiteSchema).optional(),
 });
 
 // ============================================================

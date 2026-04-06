@@ -49,7 +49,7 @@ export interface DAGDefinition {
 export interface DAGNode {
   id: string;
   agentId: string;
-  type: 'task' | 'parallel' | 'choice' | 'wait' | 'approval';
+  type: 'task' | 'parallel' | 'choice' | 'wait' | 'approval' | 'loop' | 'sub-workflow';
   inputMapping?: Record<string, string>;
   condition?: string;
   retry?: RetryConfig;
@@ -86,7 +86,7 @@ export interface StateMachineDefinition {
   states: Record<string, StateDefinition>;
 }
 
-export type StateType = 'task' | 'parallel' | 'choice' | 'wait' | 'succeed' | 'fail';
+export type StateType = 'task' | 'parallel' | 'choice' | 'wait' | 'succeed' | 'fail' | 'loop' | 'sub-workflow';
 
 export interface StateDefinition {
   type: StateType;
