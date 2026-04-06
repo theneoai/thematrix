@@ -100,7 +100,7 @@ export function StepEfficiencyMetric(
     }
 
     // Without expected steps, penalize for excessive steps (>20 = low efficiency)
-    const score = Math.max(0, 1 - (actualSteps - 1) / 20);
+    const score = Math.min(1, Math.max(0, 1 - (actualSteps - 1) / 20));
     return {
       metric: name,
       score,
@@ -189,34 +189,30 @@ export function LLMTrajectoryJudgeMetric(
   name: string,
   llmAdapter: LLMAdapter,
 ): TrajectoryMetricFunction {
-  const PROMPT = `You are an expert evaluator of AI agent behavior. Analyze the following agent trajectory and rate it on a scale of 0-10.
-
-Goal: {goal}
-Final Output: {output}
-Task Completed: {completed}
-
-Steps taken:
-{steps}
-
-Evaluate based on:
-1. Was the goal achieved effectively?
-2. Were the tools used appropriately?
-3. Was the approach efficient (minimal unnecessary steps)?
-4. Were errors handled well?
-5. Was the final output high quality?
-
-Respond with ONLY a number 0-10.`;
-
   return async (trajectory: Trajectory): Promise<EvalScore> => {
     const stepsStr = trajectory.steps
       .map((s, i) => `  ${i + 1}. [${s.type}] ${s.name} → ${s.success ? 'OK' : 'FAIL'} (${s.durationMs}ms)`)
       .join('\n');
 
-    const prompt = PROMPT
-      .replace('{goal}', trajectory.goal)
-      .replace('{output}', trajectory.finalOutput.slice(0, 500))
-      .replace('{completed}', String(trajectory.taskCompleted))
-      .replace('{steps}', stepsStr);
+    const prompt = [
+      'You are an expert evaluator of AI agent behavior. Analyze the following agent trajectory and rate it on a scale of 0-10.',
+      '',
+      `Goal: ${trajectory.goal}`,
+      `Final Output: ${trajectory.finalOutput.slice(0, 500)}`,
+      `Task Completed: ${trajectory.taskCompleted}`,
+      '',
+      'Steps taken:',
+      stepsStr,
+      '',
+      'Evaluate based on:',
+      '1. Was the goal achieved effectively?',
+      '2. Were the tools used appropriately?',
+      '3. Was the approach efficient (minimal unnecessary steps)?',
+      '4. Were errors handled well?',
+      '5. Was the final output high quality?',
+      '',
+      'Respond with ONLY a number 0-10.',
+    ].join('\n');
 
     try {
       const response = await llmAdapter.chat({

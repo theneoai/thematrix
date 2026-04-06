@@ -135,6 +135,9 @@ class InMemorySpan implements ITelemetrySpan {
 /** Per-async-context span stack using AsyncLocalStorage */
 const spanStorage = new AsyncLocalStorage<InMemorySpan[]>();
 
+/** Maximum spans retained in memory before eviction */
+const MAX_SPANS = 10_000;
+
 export class InMemoryTelemetryProvider implements ITelemetryProvider {
   readonly spans: RecordedSpan[] = [];
   private currentTraceId: string = generateTraceId();
@@ -145,6 +148,10 @@ export class InMemoryTelemetryProvider implements ITelemetryProvider {
       ?? (stack && stack.length > 0 ? stack[stack.length - 1].context : undefined);
     const traceId = parentContext?.traceId ?? this.currentTraceId;
     const span = new InMemorySpan(name, traceId, parentContext, options);
+    // Evict oldest spans to prevent unbounded memory growth
+    if (this.spans.length >= MAX_SPANS) {
+      this.spans.splice(0, this.spans.length - MAX_SPANS + 1);
+    }
     this.spans.push(span.record);
     // Push onto per-async-context stack if available
     if (stack) {

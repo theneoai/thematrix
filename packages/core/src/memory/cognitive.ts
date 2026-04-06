@@ -255,7 +255,7 @@ export class CognitiveMemoryManager implements ICognitiveMemoryManager {
     if (query.object) { sql += ' AND object = ?'; params.push(query.object); }
     if (query.namespace) { sql += ' AND namespace = ?'; params.push(query.namespace); }
 
-    sql += ' ORDER BY confidence DESC';
+    sql += ' ORDER BY confidence DESC LIMIT 100';
 
     const rows = this.db.prepare(sql).all(...params) as FactRow[];
     return rows.map(rowToFact);
@@ -332,7 +332,7 @@ export class CognitiveMemoryManager implements ICognitiveMemoryManager {
     const escaped = goal.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
     const rows = this.db.prepare(`
       SELECT * FROM procedural_patterns
-      WHERE goal_pattern LIKE ?
+      WHERE goal_pattern LIKE ? ESCAPE '\\'
       ORDER BY success_rate DESC, usage_count DESC
       LIMIT ?
     `).all(`%${escaped}%`, topK) as ProcRow[];
