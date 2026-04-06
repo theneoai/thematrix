@@ -249,7 +249,29 @@ export class MiniMaxAdapter implements LLMAdapter {
 
   private formatMessages(messages: ChatMessage[]): unknown[] {
     // MiniMax OpenAI-compat 端点直接支持 system/user/assistant/tool 角色
-    return messages.map(m => ({ role: m.role, content: m.content }));
+    const result: unknown[] = [];
+    for (const m of messages) {
+      if (m.role === 'tool') {
+        // OpenAI-compat requires one message per tool result, each with tool_call_id
+        if (m.toolResults && m.toolResults.length > 0) {
+          for (const r of m.toolResults) {
+            result.push({ role: 'tool', tool_call_id: r.toolCallId, content: r.content });
+          }
+        } else {
+          result.push({ role: 'tool', content: m.content });
+        }
+      } else if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
+        // Assistant message that triggered tool calls
+        result.push({
+          role: 'assistant',
+          content: m.content || null,
+          tool_calls: m.toolCalls,
+        });
+      } else {
+        result.push({ role: m.role, content: m.content });
+      }
+    }
+    return result;
   }
 
   private formatTools(tools: ToolDefinition[]): unknown[] {
