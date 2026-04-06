@@ -232,16 +232,24 @@ export class GuardrailRunner {
   // Built-in guardrail implementations
   // ----------------------------------------------------------------
 
+  /** Maximum input length for regex-based guardrails to prevent ReDoS on very long inputs */
+  private static readonly MAX_REGEX_INPUT_LENGTH = 100_000;
+
   private checkContentSafety(
     guardrail: GuardrailConfig,
     content: string,
   ): GuardrailResult {
     const violations: GuardrailViolation[] = [];
 
+    // Truncate extremely long inputs to prevent regex performance issues
+    const safeContent = content.length > GuardrailRunner.MAX_REGEX_INPUT_LENGTH
+      ? content.slice(0, GuardrailRunner.MAX_REGEX_INPUT_LENGTH)
+      : content;
+
     for (const pattern of CONTENT_SAFETY_PATTERNS) {
       pattern.lastIndex = 0;
       let match: RegExpExecArray | null;
-      while ((match = pattern.exec(content)) !== null) {
+      while ((match = pattern.exec(safeContent)) !== null) {
         violations.push({
           type: 'content-safety',
           severity: 'critical',
@@ -265,11 +273,16 @@ export class GuardrailRunner {
   ): GuardrailResult {
     const violations: GuardrailViolation[] = [];
 
+    // Truncate extremely long inputs to prevent regex performance issues
+    const safeContent = content.length > GuardrailRunner.MAX_REGEX_INPUT_LENGTH
+      ? content.slice(0, GuardrailRunner.MAX_REGEX_INPUT_LENGTH)
+      : content;
+
     for (const { name, pattern } of PII_PATTERNS) {
       // Reset lastIndex for global regex
       pattern.lastIndex = 0;
       let match: RegExpExecArray | null;
-      while ((match = pattern.exec(content)) !== null) {
+      while ((match = pattern.exec(safeContent)) !== null) {
         violations.push({
           type: 'pii-detection',
           severity: name === 'ssn' || name === 'credit-card' ? 'high' : 'medium',
@@ -324,10 +337,15 @@ export class GuardrailRunner {
   ): GuardrailResult {
     const violations: GuardrailViolation[] = [];
 
+    // Truncate extremely long inputs to prevent regex performance issues
+    const safeContent = content.length > GuardrailRunner.MAX_REGEX_INPUT_LENGTH
+      ? content.slice(0, GuardrailRunner.MAX_REGEX_INPUT_LENGTH)
+      : content;
+
     for (const pattern of PROMPT_INJECTION_PATTERNS) {
       pattern.lastIndex = 0;
       let match: RegExpExecArray | null;
-      while ((match = pattern.exec(content)) !== null) {
+      while ((match = pattern.exec(safeContent)) !== null) {
         violations.push({
           type: 'prompt-injection',
           severity: 'critical',
@@ -391,22 +409,30 @@ export class GuardrailRunner {
       try {
         parsed = JSON.parse(response.content);
       } catch {
-        logger.warn(`Custom guardrail "${guardrail.name}" returned invalid JSON, failing open`);
+        logger.warn(`Custom guardrail "${guardrail.name}" returned invalid JSON, failing closed`);
         return {
           guardrailId: guardrail.id,
-          passed: true,
+          passed: false,
           action: guardrail.action,
-          violations: [],
+          violations: [{
+            type: 'custom',
+            severity: 'high',
+            message: `Guardrail "${guardrail.name}" returned unparseable response; blocked as a precaution`,
+          }],
         };
       }
 
       if (typeof parsed.passed !== 'boolean') {
-        logger.warn(`Custom guardrail "${guardrail.name}" response missing 'passed' field, failing open`);
+        logger.warn(`Custom guardrail "${guardrail.name}" response missing 'passed' field, failing closed`);
         return {
           guardrailId: guardrail.id,
-          passed: true,
+          passed: false,
           action: guardrail.action,
-          violations: [],
+          violations: [{
+            type: 'custom',
+            severity: 'high',
+            message: `Guardrail "${guardrail.name}" returned invalid response (missing 'passed'); blocked as a precaution`,
+          }],
         };
       }
 
@@ -421,6 +447,19 @@ export class GuardrailRunner {
       // If action is rewrite and there are violations, ask LLM to rewrite
       if (guardrail.action === 'rewrite' && !parsed.passed) {
         rewrittenContent = await this.rewriteContent(content, guardrail, violations);
+        // Validate rewritten content against the same guardrail to prevent bypass
+        if (rewrittenContent) {
+          try {
+            const revalidation = await this.checkCustomLlm(guardrail, rewrittenContent);
+            if (!revalidation.passed) {
+              logger.warn(`Rewritten content still fails guardrail "${guardrail.name}", discarding rewrite`);
+              rewrittenContent = undefined;
+            }
+          } catch (revalErr) {
+            logger.warn(`Failed to validate rewritten content for guardrail "${guardrail.name}", discarding rewrite`);
+            rewrittenContent = undefined;
+          }
+        }
       }
 
       return {
@@ -433,12 +472,16 @@ export class GuardrailRunner {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logger.error(`Custom guardrail "${guardrail.name}" evaluation failed: ${message}`);
-      // Fail open on evaluation errors to avoid blocking legitimate content
+      // Fail closed on evaluation errors — blocking is safer than allowing unchecked content
       return {
         guardrailId: guardrail.id,
-        passed: true,
+        passed: false,
         action: guardrail.action,
-        violations: [],
+        violations: [{
+          type: 'custom',
+          severity: 'high',
+          message: `Guardrail "${guardrail.name}" evaluation failed (${message}); blocked as a precaution`,
+        }],
       };
     }
   }

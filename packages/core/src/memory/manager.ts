@@ -25,6 +25,7 @@ export class MemoryManager implements IMemoryManager {
   private db: Database.Database;
   private vectorStore?: IVectorStore;
   private embeddingProvider?: IEmbeddingProvider;
+  private cleanupInProgress = false;
 
   constructor(options: MemoryManagerOptions = {}) {
     this.db = new Database(options.dbPath ?? ':memory:');
@@ -74,7 +75,13 @@ export class MemoryManager implements IMemoryManager {
     );
     const row = stmt.get(scope, ownerId, key) as { value: string } | undefined;
     
-    return row ? JSON.parse(row.value) : undefined;
+    if (!row) return undefined;
+    try {
+      return JSON.parse(row.value);
+    } catch (err) {
+      logger.warn(`Failed to parse JSON for key "${key}" (scope=${scope}, owner=${ownerId}): ${(err as Error).message}`);
+      return undefined;
+    }
   }
 
   async set(
@@ -128,12 +135,21 @@ export class MemoryManager implements IMemoryManager {
     const stmt = this.db.prepare(sql);
     const rows = stmt.all(...params) as KVRow[];
     
-    return rows.map(row => ({
-      key: row.key,
-      value: JSON.parse(row.value),
-      createdAt: new Date(row.created_at),
-      expiresAt: row.expires_at ? new Date(row.expires_at) : undefined,
-    }));
+    return rows.map(row => {
+      let value: unknown;
+      try {
+        value = JSON.parse(row.value);
+      } catch (err) {
+        logger.warn(`Failed to parse JSON for key "${row.key}" in list (scope=${scope}, owner=${ownerId}): ${(err as Error).message}`);
+        value = row.value; // Fall back to raw string
+      }
+      return {
+        key: row.key,
+        value,
+        createdAt: new Date(row.created_at),
+        expiresAt: row.expires_at ? new Date(row.expires_at) : undefined,
+      };
+    });
   }
 
   // Vector Memory
@@ -283,10 +299,17 @@ export class MemoryManager implements IMemoryManager {
   }
 
   private cleanupExpired(): void {
-    const stmt = this.db.prepare(
-      'DELETE FROM kv_store WHERE expires_at IS NOT NULL AND expires_at < ?'
-    );
-    stmt.run(new Date().toISOString());
+    // Guard against concurrent cleanup operations
+    if (this.cleanupInProgress) return;
+    this.cleanupInProgress = true;
+    try {
+      const stmt = this.db.prepare(
+        'DELETE FROM kv_store WHERE expires_at IS NOT NULL AND expires_at < ?'
+      );
+      stmt.run(new Date().toISOString());
+    } finally {
+      this.cleanupInProgress = false;
+    }
   }
 
   close(): void {

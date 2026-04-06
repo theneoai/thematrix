@@ -58,6 +58,16 @@ interface OpenAIStreamChunk {
   }>;
 }
 
+/** Redact API keys from error messages */
+function redactApiKey(text: string, apiKey: string): string {
+  if (!apiKey || apiKey.length < 8) return text;
+  return text.replaceAll(apiKey, apiKey.slice(0, 4) + '...' + apiKey.slice(-4));
+}
+
+/** Timeout constants (ms) */
+const CHAT_TIMEOUT_MS = 60_000;
+const STREAM_TIMEOUT_MS = 120_000;
+
 export class OpenAIAdapter implements LLMAdapter {
   readonly provider = 'openai';
   private config: OpenAIConfig;
@@ -70,29 +80,45 @@ export class OpenAIAdapter implements LLMAdapter {
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
-    const response = await fetch(`${this.config.baseUrl ?? 'https://api.openai.com/v1'}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.config.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: request.model || this.config.defaultModel,
-        messages: this.formatMessages(request.messages),
-        max_tokens: request.maxTokens,
-        temperature: request.temperature,
-        tools: request.tools ? this.formatTools(request.tools) : undefined,
-      }),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), CHAT_TIMEOUT_MS);
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.config.baseUrl ?? 'https://api.openai.com/v1'}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.config.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: request.model || this.config.defaultModel,
+          messages: this.formatMessages(request.messages),
+          max_tokens: request.maxTokens,
+          temperature: request.temperature,
+          tools: request.tools ? this.formatTools(request.tools) : undefined,
+        }),
+        signal: controller.signal,
+      });
+    } catch (err: unknown) {
+      throw new Error(`OpenAI API request failed: ${redactApiKey(String(err), this.config.apiKey)}`);
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (!response.ok) {
       const error = await response.text();
-      throw new Error(`OpenAI API error: ${response.status} - ${error}`);
+      throw new Error(`OpenAI API error: ${response.status} - ${redactApiKey(error, this.config.apiKey)}`);
     }
 
     const data = await response.json() as OpenAIResponse;
+
+    if (!data.choices?.length || !data.choices[0].message) {
+      throw new Error('OpenAI API returned an invalid response: missing choices or message');
+    }
+
     const choice = data.choices[0];
-    
+
     return {
       id: data.id,
       model: data.model,
@@ -106,32 +132,44 @@ export class OpenAIAdapter implements LLMAdapter {
         },
       })),
       usage: {
-        promptTokens: data.usage.prompt_tokens,
-        completionTokens: data.usage.completion_tokens,
-        totalTokens: data.usage.total_tokens,
+        promptTokens: data.usage?.prompt_tokens ?? 0,
+        completionTokens: data.usage?.completion_tokens ?? 0,
+        totalTokens: data.usage?.total_tokens ?? 0,
       },
     };
   }
 
   async *chatStream(request: ChatRequest): AsyncIterable<ChatStreamChunk> {
-    const response = await fetch(`${this.config.baseUrl ?? 'https://api.openai.com/v1'}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.config.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: request.model || this.config.defaultModel,
-        messages: this.formatMessages(request.messages),
-        max_tokens: request.maxTokens,
-        temperature: request.temperature,
-        stream: true,
-      }),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), STREAM_TIMEOUT_MS);
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.config.baseUrl ?? 'https://api.openai.com/v1'}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.config.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: request.model || this.config.defaultModel,
+          messages: this.formatMessages(request.messages),
+          max_tokens: request.maxTokens,
+          temperature: request.temperature,
+          stream: true,
+        }),
+        signal: controller.signal,
+      });
+    } catch (err: unknown) {
+      clearTimeout(timeout);
+      throw new Error(`OpenAI API request failed: ${redactApiKey(String(err), this.config.apiKey)}`);
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (!response.ok) {
       const error = await response.text();
-      throw new Error(`OpenAI API error: ${response.status} - ${error}`);
+      throw new Error(`OpenAI API error: ${response.status} - ${redactApiKey(error, this.config.apiKey)}`);
     }
 
     const reader = response.body?.getReader();

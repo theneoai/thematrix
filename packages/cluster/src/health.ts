@@ -92,10 +92,22 @@ export class ClusterHealthMonitor {
     });
 
     // Add overall timeout to prevent health checks from blocking the event loop
-    await Promise.race([
-      Promise.allSettled(checks),
-      new Promise<void>((resolve) => setTimeout(resolve, 30_000)),
-    ]);
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        Promise.allSettled(checks),
+        new Promise<never>((_resolve, reject) => {
+          timeoutHandle = setTimeout(
+            () => reject(new Error('Health check round timed out after 30s')),
+            30_000,
+          );
+        }),
+      ]);
+    } catch (error) {
+      this.logger.warn(`Health check round did not complete in time: ${error}`);
+    } finally {
+      if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+    }
   }
 
   private markNodeOffline(nodeId: string): void {

@@ -133,8 +133,17 @@ export class TriggerMatcher {
   mapInput(rule: TriggerRule, event: TriggerEvent): Record<string, unknown> {
     const input: Record<string, unknown> = {};
 
-    for (const [key, path] of Object.entries(rule.inputMapping)) {
-      input[key] = this.resolveJsonPath(path, event.payload);
+    const entries = Object.entries(rule.inputMapping);
+    // Limit the number of input mapping keys to prevent unbounded expansion
+    const MAX_INPUT_KEYS = 100;
+    if (entries.length > MAX_INPUT_KEYS) {
+      this.logger.warn(
+        `Input mapping for rule "${rule.name}" has ${entries.length} keys, limiting to ${MAX_INPUT_KEYS}`,
+      );
+    }
+
+    for (const [key, path] of entries.slice(0, MAX_INPUT_KEYS)) {
+      input[key] = this.resolveJsonPath(path as string, event.payload);
     }
 
     return input;
@@ -148,6 +157,13 @@ export class TriggerMatcher {
     // Strip leading "$." if present
     const normalized = path.startsWith('$.') ? path.slice(2) : path;
     const parts = normalized.split('.');
+
+    // Limit traversal depth to prevent abuse via deeply nested paths
+    const MAX_DEPTH = 20;
+    if (parts.length > MAX_DEPTH) {
+      this.logger.warn(`JSONPath too deep (${parts.length} levels, max ${MAX_DEPTH}): ${path}`);
+      return undefined;
+    }
 
     let current: unknown = obj;
     for (const part of parts) {

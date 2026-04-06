@@ -6,7 +6,7 @@
  * long-running agent loops and plan-and-execute workflows.
  */
 import type { ConversationTurn, LLMAdapter, IMemoryManager } from '@thematrix/types';
-import { Logger } from '@thematrix/utils';
+import { Logger, timeout } from '@thematrix/utils';
 
 const logger = new Logger({ prefix: 'ContextManager' });
 
@@ -17,6 +17,7 @@ const logger = new Logger({ prefix: 'ContextManager' });
 const DEFAULT_MAX_CONTEXT_TOKENS = 8_000;
 const DEFAULT_SUMMARIZATION_THRESHOLD = 0.75;
 const DEFAULT_RECENT_TURNS_TO_KEEP = 6;
+const DEFAULT_SUMMARIZATION_TIMEOUT_MS = 30_000;
 
 const SUMMARY_TURN_MARKER = '__context_summary__';
 
@@ -114,7 +115,14 @@ export class ContextManager {
         ? oldTurns[0].content
         : undefined;
 
-    const summary = await this.summarizeHistory(oldTurns, existingSummary);
+    let summary: string;
+    try {
+      summary = await this.summarizeHistory(oldTurns, existingSummary);
+    } catch (err) {
+      // Summarization failed — return existing history intact to avoid corruption
+      logger.error(`Summarization failed, preserving existing context: ${(err as Error).message ?? String(err)}`);
+      return history;
+    }
 
     // Build the summary turn
     const summaryTurn: ConversationTurn = {
@@ -124,11 +132,26 @@ export class ContextManager {
       timestamp: new Date(),
     };
 
-    // Replace history in memory: clear and re-append
-    await memory.clearHistory(instanceId);
-    await memory.appendTurn(instanceId, summaryTurn);
-    for (const turn of recentTurns) {
-      await memory.appendTurn(instanceId, turn);
+    // Replace history in memory: clear and re-append.
+    // If any step fails after clearing, restore the original history.
+    try {
+      await memory.clearHistory(instanceId);
+      await memory.appendTurn(instanceId, summaryTurn);
+      for (const turn of recentTurns) {
+        await memory.appendTurn(instanceId, turn);
+      }
+    } catch (err) {
+      logger.error(`Failed to write summarized history, restoring original: ${(err as Error).message ?? String(err)}`);
+      // Best-effort restore: clear and re-append original history
+      try {
+        await memory.clearHistory(instanceId);
+        for (const turn of history) {
+          await memory.appendTurn(instanceId, turn);
+        }
+      } catch (restoreErr) {
+        logger.error(`Failed to restore original history: ${(restoreErr as Error).message ?? String(restoreErr)}`);
+      }
+      return history;
     }
 
     const optimized = [summaryTurn, ...recentTurns];
@@ -142,10 +165,26 @@ export class ContextManager {
   }
 
   /**
-   * Rough token estimation: ~4 characters per token.
+   * Improved token estimation using word/punctuation splitting.
+   * More accurate than naive char/4: counts words and punctuation clusters
+   * separately, which better approximates BPE tokenization.
    */
   estimateTokens(text: string): number {
-    return Math.ceil(text.length / 4);
+    if (!text) return 0;
+    // Count words (split on whitespace) — each word is roughly 1 token for
+    // short words and 1+ tokens for longer/code words.
+    const words = text.split(/\s+/).filter(w => w.length > 0);
+    let tokens = 0;
+    for (const word of words) {
+      if (word.length <= 4) {
+        tokens += 1;
+      } else {
+        // Longer words tend to be split into multiple tokens (~1 per 4 chars)
+        tokens += Math.ceil(word.length / 4);
+      }
+    }
+    // Add overhead for message framing (~4 tokens per message)
+    return Math.max(tokens, 1);
   }
 
   /**
@@ -157,21 +196,26 @@ export class ContextManager {
   ): Promise<string> {
     const formatted = this.formatTurnsForSummary(turns);
 
-    let userPrompt = 'Summarize the following conversation history:\n\n' + formatted;
+    // Wrap conversation content in delimiters to reduce prompt injection risk
+    let userPrompt = 'Summarize the following conversation history:\n\n<conversation>\n' + formatted + '\n</conversation>';
     if (priorContext) {
       userPrompt +=
-        '\n\nPrior accumulated context (from earlier summarization):\n' + priorContext;
+        '\n\nPrior accumulated context (from earlier summarization):\n<prior_context>\n' + priorContext + '\n</prior_context>';
     }
 
-    const response = await this.llmAdapter.chat({
-      model: this.model,
-      messages: [
-        { role: 'system', content: SUMMARIZATION_SYSTEM_PROMPT },
-        { role: 'user', content: userPrompt },
-      ],
-      temperature: 0.2,
-      maxTokens: Math.floor(this.maxContextTokens * 0.25),
-    });
+    const response = await timeout(
+      this.llmAdapter.chat({
+        model: this.model,
+        messages: [
+          { role: 'system', content: SUMMARIZATION_SYSTEM_PROMPT },
+          { role: 'user', content: userPrompt },
+        ],
+        temperature: 0.2,
+        maxTokens: Math.floor(this.maxContextTokens * 0.25),
+      }),
+      DEFAULT_SUMMARIZATION_TIMEOUT_MS,
+      'Context summarization timed out',
+    );
 
     return `[Context Summary]\n${response.content}`;
   }

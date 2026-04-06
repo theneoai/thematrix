@@ -6,7 +6,7 @@
 
 import { mkdir, rm, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, resolve, relative } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { WorkspaceConfig } from '@thematrix/types';
@@ -24,6 +24,7 @@ export interface WorkspaceInfo {
 
 export class WorkspaceManager {
   private workspaces = new Map<string, WorkspaceInfo>();
+  private cleanupInProgress = new Set<string>();
 
   /**
    * Create a workspace according to the provided config.
@@ -67,6 +68,12 @@ export class WorkspaceManager {
    * Clean up a workspace by ID.
    */
   async cleanup(workspaceId: string): Promise<void> {
+    // Guard against concurrent cleanup of the same workspace
+    if (this.cleanupInProgress.has(workspaceId)) {
+      logger.warn(`Workspace ${workspaceId} cleanup already in progress, skipping`);
+      return;
+    }
+
     const info = this.workspaces.get(workspaceId);
     if (!info) {
       logger.warn(`Workspace ${workspaceId} not found, nothing to clean up`);
@@ -79,6 +86,7 @@ export class WorkspaceManager {
       return;
     }
 
+    this.cleanupInProgress.add(workspaceId);
     try {
       switch (info.config.type) {
         case 'temp-dir':
@@ -96,6 +104,8 @@ export class WorkspaceManager {
       logger.error(
         `Failed to clean up workspace ${workspaceId}: ${error instanceof Error ? error.message : String(error)}`,
       );
+    } finally {
+      this.cleanupInProgress.delete(workspaceId);
     }
 
     this.workspaces.delete(workspaceId);
@@ -125,9 +135,16 @@ export class WorkspaceManager {
   private validateBasePath(basePath: string): string {
     const resolved = resolve(basePath);
     const systemTmp = tmpdir();
-    // basePath must be under tmpdir or be an absolute path that doesn't traverse
-    if (!resolved.startsWith(systemTmp) && !resolve(resolved).startsWith('/')) {
+    // basePath must be under tmpdir or /home — reject traversal outside allowed roots
+    const allowedRoots = [systemTmp, '/home', '/var/lib'];
+    const isAllowed = allowedRoots.some((root) => resolved.startsWith(root + '/') || resolved === root);
+    if (!isAllowed) {
       throw new Error(`Invalid basePath: "${basePath}" resolves outside allowed directories`);
+    }
+    // Reject paths containing traversal sequences after resolution
+    const rel = relative(resolved, basePath);
+    if (rel.startsWith('..')) {
+      throw new Error(`Invalid basePath: "${basePath}" contains path traversal`);
     }
     return resolved;
   }
@@ -151,6 +168,15 @@ export class WorkspaceManager {
     return mkdtemp(join(base, 'thematrix-'));
   }
 
+  /** Ensure a child path stays within its parent directory */
+  private ensureContainedPath(parentDir: string, childPath: string): string {
+    const resolvedChild = resolve(childPath);
+    if (!resolvedChild.startsWith(parentDir + '/') && resolvedChild !== parentDir) {
+      throw new Error(`Path traversal detected: "${childPath}" escapes base directory "${parentDir}"`);
+    }
+    return resolvedChild;
+  }
+
   private async createGitWorktree(config: WorkspaceConfig, workspaceId: string): Promise<string> {
     if (!config.gitRepo) {
       throw new Error('git-worktree workspace requires gitRepo to be set');
@@ -160,7 +186,7 @@ export class WorkspaceManager {
     const base = config.basePath ? this.validateBasePath(config.basePath) : join(tmpdir(), 'thematrix-worktrees');
     await mkdir(base, { recursive: true });
 
-    const worktreePath = join(base, workspaceId);
+    const worktreePath = this.ensureContainedPath(base, join(base, workspaceId));
 
     await execFileAsync('git', [
       '-C', config.gitRepo,
@@ -193,7 +219,7 @@ export class WorkspaceManager {
 
   private async createSharedVolume(config: WorkspaceConfig, workspaceId: string): Promise<string> {
     const base = config.basePath ? this.validateBasePath(config.basePath) : join(tmpdir(), 'thematrix-shared');
-    const volumePath = join(base, workspaceId);
+    const volumePath = this.ensureContainedPath(base, join(base, workspaceId));
     await mkdir(volumePath, { recursive: true });
     return volumePath;
   }

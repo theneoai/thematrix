@@ -71,6 +71,27 @@ export class AgentRuntime {
     errors: 0,
   };
 
+  /** Valid state transitions for the agent state machine */
+  private static readonly VALID_TRANSITIONS: Record<AgentStatus, AgentStatus[]> = {
+    'created': ['initializing'],
+    'initializing': ['running', 'error'],
+    'running': ['paused', 'stopped', 'error', 'completed'],
+    'paused': ['running', 'stopped', 'error'],
+    'error': ['running', 'stopped'],  // 'running' via resetFromError
+    'completed': ['stopped'],
+    'stopped': [],
+  };
+
+  private transitionStatus(newStatus: AgentStatus): void {
+    const allowed = AgentRuntime.VALID_TRANSITIONS[this.status];
+    if (!allowed || !allowed.includes(newStatus)) {
+      throw new Error(
+        `Invalid status transition: cannot go from '${this.status}' to '${newStatus}'`,
+      );
+    }
+    this.status = newStatus;
+  }
+
   constructor(options: AgentRuntimeOptions) {
     this.instanceId = generateAgentInstanceId();
     this.definition = options.definition;
@@ -88,12 +109,12 @@ export class AgentRuntime {
   }
 
   async initialize(): Promise<void> {
-    this.status = 'initializing';
+    this.transitionStatus('initializing');
     await this.publishEvent(EventTypes.AGENT_INITIALIZED, {
       agentId: this.definition.id,
       instanceId: this.instanceId,
     });
-    this.status = 'running';
+    this.transitionStatus('running');
     this.metrics.startTime = new Date();
     
     await this.publishEvent(EventTypes.AGENT_STARTED, {
@@ -420,19 +441,23 @@ export class AgentRuntime {
 
       // Record cognitive memory episode (success)
       if (this.cognitiveMemory) {
-        this.cognitiveMemory.recordEpisode({
-          agentId: this.definition.id,
-          eventType: 'task-completion',
-          summary: input.slice(0, 200),
-          context: {
-            workflowRunId: this.workflowRunId,
-            input: input.slice(0, 500),
-            output: finalContent.slice(0, 500),
-            toolsUsed: allToolsUsed.length > 0 ? allToolsUsed : undefined,
-          },
-          outcome: 'success',
-          importance: 0.5,
-        }).catch(err => logger.warn(`Failed to record episode: ${err instanceof Error ? err.message : String(err)}`));
+        try {
+          await this.cognitiveMemory.recordEpisode({
+            agentId: this.definition.id,
+            eventType: 'task-completion',
+            summary: input.slice(0, 200),
+            context: {
+              workflowRunId: this.workflowRunId,
+              input: input.slice(0, 500),
+              output: finalContent.slice(0, 500),
+              toolsUsed: allToolsUsed.length > 0 ? allToolsUsed : undefined,
+            },
+            outcome: 'success',
+            importance: 0.5,
+          });
+        } catch (err) {
+          logger.warn(`Failed to record episode: ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
 
       await this.publishEvent(EventTypes.AGENT_TURN_COMPLETED, {
@@ -445,7 +470,7 @@ export class AgentRuntime {
       return finalContent;
     } catch (error) {
       this.metrics.errors++;
-      this.status = 'error';
+      this.transitionStatus('error');
 
       // End telemetry turn span (error)
       if (turnSpan) {
@@ -456,19 +481,26 @@ export class AgentRuntime {
 
       // Record cognitive memory episode (failure)
       if (this.cognitiveMemory) {
-        this.cognitiveMemory.recordEpisode({
-          agentId: this.definition.id,
-          eventType: 'error-recovery',
-          summary: input.slice(0, 200),
-          context: {
-            workflowRunId: this.workflowRunId,
-            input: input.slice(0, 500),
-          },
-          outcome: 'failure',
-          lessons: [error instanceof Error ? error.message : String(error)],
-          importance: 0.8,
-        }).catch(err => logger.warn(`Failed to record episode: ${err instanceof Error ? err.message : String(err)}`));
+        try {
+          await this.cognitiveMemory.recordEpisode({
+            agentId: this.definition.id,
+            eventType: 'error-recovery',
+            summary: input.slice(0, 200),
+            context: {
+              workflowRunId: this.workflowRunId,
+              input: input.slice(0, 500),
+            },
+            outcome: 'failure',
+            lessons: [error instanceof Error ? error.message : String(error)],
+            importance: 0.8,
+          });
+        } catch (err) {
+          logger.warn(`Failed to record episode: ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
+
+      // Cleanup resources on error
+      this.cleanup();
 
       await this.publishEvent(EventTypes.AGENT_ERROR, {
         agentId: this.definition.id,
@@ -527,7 +559,7 @@ export class AgentRuntime {
 
   async pause(): Promise<void> {
     if (this.status === 'running') {
-      this.status = 'paused';
+      this.transitionStatus('paused');
       await this.publishEvent(EventTypes.AGENT_PAUSED, {
         agentId: this.definition.id,
         instanceId: this.instanceId,
@@ -539,14 +571,14 @@ export class AgentRuntime {
   /** Reset from error state to running, allowing retries */
   resetFromError(): void {
     if (this.status === 'error') {
-      this.status = 'running';
+      this.transitionStatus('running');
       logger.info(`Agent ${this.definition.id} (${this.instanceId}) reset from error state`);
     }
   }
 
   async resume(): Promise<void> {
     if (this.status === 'paused') {
-      this.status = 'running';
+      this.transitionStatus('running');
       await this.publishEvent(EventTypes.AGENT_RESUMED, {
         agentId: this.definition.id,
         instanceId: this.instanceId,
@@ -557,14 +589,26 @@ export class AgentRuntime {
 
   async stop(): Promise<void> {
     if (this.status === 'stopped') return; // idempotent
-    this.status = 'stopped';
+    // 'completed' -> 'stopped' is allowed by the state machine; for other states
+    // we also need to allow the transition (e.g. 'running' -> 'stopped').
+    this.transitionStatus('stopped');
     this.metrics.endTime = new Date();
-    await this.publishEvent(EventTypes.AGENT_STOPPED, {
-      agentId: this.definition.id,
-      instanceId: this.instanceId,
-      metrics: this.metrics,
-    });
+    try {
+      await this.publishEvent(EventTypes.AGENT_STOPPED, {
+        agentId: this.definition.id,
+        instanceId: this.instanceId,
+        metrics: this.metrics,
+      });
+    } finally {
+      this.cleanup();
+    }
     logger.info(`Agent ${this.definition.id} stopped`);
+  }
+
+  /** Release resources held by the runtime */
+  private cleanup(): void {
+    this.tools.clear();
+    logger.debug(`Agent ${this.definition.id} (${this.instanceId}) resources cleaned up`);
   }
 
   getStatus(): AgentStatus {

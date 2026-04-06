@@ -78,6 +78,14 @@ export class FeishuChannelAdapter implements ChannelAdapter {
       return false;
     }
 
+    // Replay protection: reject requests older than 5 minutes
+    const timestampNum = Number(timestamp);
+    const now = Math.floor(Date.now() / 1000);
+    if (Number.isNaN(timestampNum) || Math.abs(now - timestampNum) > 300) {
+      this.logger.warn('Request timestamp is stale or invalid (replay protection)');
+      return false;
+    }
+
     const rawBody = req.rawBody;
     if (!rawBody) {
       this.logger.warn('Missing rawBody for signature verification');
@@ -119,7 +127,7 @@ export class FeishuChannelAdapter implements ChannelAdapter {
     if (signingSecret) {
       const timestamp = Math.floor(Date.now() / 1000).toString();
       const stringToSign = `${timestamp}\n${signingSecret}`;
-      const sign = createHmac('sha256', Buffer.from(stringToSign, 'utf-8')).update('').digest('base64');
+      const sign = createHmac('sha256', Buffer.from(stringToSign, 'utf-8')).update(JSON.stringify(body)).digest('base64');
       body.timestamp = timestamp;
       body.sign = sign;
     }

@@ -30,6 +30,16 @@ interface RateLimitState {
   concurrentRequests: number;
 }
 
+/** Milliseconds per budget period */
+function periodToMs(period: string): number | null {
+  switch (period) {
+    case 'hourly': return 60 * 60 * 1000;
+    case 'daily': return 24 * 60 * 60 * 1000;
+    case 'monthly': return 30 * 24 * 60 * 60 * 1000;
+    default: return null; // 'unlimited' or unknown
+  }
+}
+
 export class TokenPool implements ITokenPool {
   private budgets = new Map<string, BudgetEntry>();
   private rateLimits = new Map<ProviderName, RateLimitState>();
@@ -62,6 +72,26 @@ export class TokenPool implements ITokenPool {
     logger.info(`Budget allocated for ${ownerType}:${ownerId} — ${budget.maxTokens} tokens, period: ${budget.period}`);
   }
 
+  /**
+   * Reset usage for a budget entry if its period has elapsed.
+   * Returns true if reset was performed.
+   */
+  private resetIfPeriodElapsed(entry: BudgetEntry): boolean {
+    const ms = periodToMs(entry.budget.period);
+    if (ms === null) return false;
+
+    const elapsed = Date.now() - entry.usage.periodStart.getTime();
+    if (elapsed >= ms) {
+      entry.usage.totalTokens = 0;
+      entry.usage.totalCostUsd = 0;
+      entry.usage.periodStart = new Date();
+      entry.usage.breakdown = [];
+      logger.info(`Budget period reset for ${entry.ownerId} (period: ${entry.budget.period})`);
+      return true;
+    }
+    return false;
+  }
+
   async consume(ownerId: string, consumption: TokenConsumption): Promise<void> {
     const entry = this.budgets.get(ownerId);
     if (!entry) {
@@ -74,19 +104,30 @@ export class TokenPool implements ITokenPool {
       throw new Error(`Provider ${consumption.provider} is not allowed for budget owner ${ownerId}`);
     }
 
-    const totalTokens = consumption.inputTokens + consumption.outputTokens;
-    const remaining = this.getRemainingBudget(ownerId);
+    // Reset usage if the budget period has elapsed
+    this.resetIfPeriodElapsed(entry);
 
-    // 检查是否超出预算
-    if (entry.budget.period !== 'unlimited' && remaining < totalTokens) {
-      this.onBudgetExceeded?.(ownerId, entry.usage, entry.budget);
-      throw new Error(
-        `Token budget exceeded for ${ownerId}: remaining=${remaining}, requested=${totalTokens}`
-      );
+    const totalTokens = consumption.inputTokens + consumption.outputTokens;
+
+    // Atomic decrement-and-check: optimistically add tokens first, then verify.
+    // This prevents concurrent callers from all passing a "remaining" check
+    // before any of them have decremented.
+    if (entry.budget.period !== 'unlimited') {
+      const newTotal = entry.usage.totalTokens + totalTokens;
+      if (newTotal > entry.budget.maxTokens) {
+        this.onBudgetExceeded?.(ownerId, entry.usage, entry.budget);
+        throw new Error(
+          `Token budget exceeded for ${ownerId}: remaining=${entry.budget.maxTokens - entry.usage.totalTokens}, requested=${totalTokens}`
+        );
+      }
+      // Commit the increment atomically (single-threaded JS ensures no interleaving
+      // between the check above and this assignment, but we must NOT await between them)
+      entry.usage.totalTokens = newTotal;
+    } else {
+      entry.usage.totalTokens += totalTokens;
     }
 
-    // 更新用量
-    entry.usage.totalTokens += totalTokens;
+    // 更新用量 (cost is always additive)
     entry.usage.totalCostUsd += consumption.costUsd ?? 0;
 
     // 更新 breakdown
@@ -134,6 +175,8 @@ export class TokenPool implements ITokenPool {
     const entry = this.budgets.get(ownerId);
     if (!entry) return 0;
     if (entry.budget.period === 'unlimited') return Infinity;
+    // Reset usage if the budget period has elapsed before computing remaining
+    this.resetIfPeriodElapsed(entry);
     return Math.max(0, entry.budget.maxTokens - entry.usage.totalTokens);
   }
 

@@ -160,17 +160,12 @@ export class WorkflowEngine {
 
     logger.info(`Workflow ${definition.id} started (run: ${runId})`);
 
-    // 设置全局超时
-    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutHandle = setTimeout(() => {
-        reject(new WorkflowError(
-          `Workflow timed out after ${this.globalTimeoutMs}ms`,
-          definition.id,
-          runId
-        ));
-      }, this.globalTimeoutMs);
-    });
+    // 设置全局超时 — abort the workflow when timeout fires so running
+    // nodes stop promptly rather than continuing in the background.
+    const abortController = this.abortControllers.get(runId)!;
+    const timeoutHandle = setTimeout(() => {
+      abortController.abort();
+    }, this.globalTimeoutMs);
 
     // 执行工作流
     let executionPromise: Promise<void>;
@@ -182,16 +177,24 @@ export class WorkflowEngine {
       executionPromise = this.executeStateMachine(definition, run);
     }
 
-    // 竞争执行和超时，完成后清除计时器
+    // Run execution; always clear timeout on completion to prevent leaking timers.
     // void is intentional: workflow runs asynchronously; caller polls via getRun()
-    void Promise.race([executionPromise, timeoutPromise])
+    void executionPromise
       .then(() => {
         clearTimeout(timeoutHandle);
         return this.completeWorkflow(runId);
       })
       .catch(error => {
         clearTimeout(timeoutHandle);
-        return this.handleWorkflowError(runId, error);
+        // If aborted due to timeout, wrap with a descriptive error
+        const finalError = abortController.signal.aborted
+          ? new WorkflowError(
+              `Workflow timed out after ${this.globalTimeoutMs}ms`,
+              definition.id,
+              runId
+            )
+          : error;
+        return this.handleWorkflowError(runId, finalError);
       })
       .catch(err => {
         // completeWorkflow or handleWorkflowError itself threw — last-resort cleanup
@@ -212,6 +215,7 @@ export class WorkflowEngine {
     const completedNodes = new Set<string>();
     const runningNodes = new Set<string>();
     const failedNodes = new Set<string>();
+    const claimedNodes = new Set<string>();
     const abortController = this.abortControllers.get(run.runId)!;
 
     // 构建依赖图
@@ -248,32 +252,49 @@ export class WorkflowEngine {
     // 找到根节点
     const readyNodes = dag.nodes.filter(n => dependencies.get(n.id)?.size === 0);
 
+    // Recursively mark all downstream dependents as failed
+    const propagateFailureToDownstream = (nodeId: string): void => {
+      const downstreamNodes = dependents.get(nodeId) ?? new Set();
+      for (const downId of downstreamNodes) {
+        if (!failedNodes.has(downId) && !completedNodes.has(downId)) {
+          claimedNodes.add(downId);
+          failedNodes.add(downId);
+          logger.warn(`Node ${downId} skipped because upstream ${nodeId} failed`);
+          propagateFailureToDownstream(downId);
+        }
+      }
+    };
+
     const executeNode = async (node: DAGNode): Promise<void> => {
       if (abortController.signal.aborted) {
         throw new WorkflowError('Workflow cancelled', definition.id, run.runId);
       }
 
-      // Atomically check-and-claim: prevent concurrent execution of same node
-      if (completedNodes.has(node.id) || runningNodes.has(node.id) || failedNodes.has(node.id)) {
-        return;
-      }
-      // Mark as running FIRST to prevent race with parallel calls
-      runningNodes.add(node.id);
-
-      // 检查依赖
+      // Check dependencies BEFORE claiming to avoid premature claims.
       const deps = dependencies.get(node.id) ?? new Set();
       for (const dep of deps) {
         if (failedNodes.has(dep)) {
-          runningNodes.delete(node.id);
+          // Claim and mark as failed — propagateFailure handles downstream.
+          if (claimedNodes.has(node.id)) return;
+          claimedNodes.add(node.id);
           failedNodes.add(node.id);
           logger.warn(`Node ${node.id} skipped because dependency ${dep} failed`);
+          propagateFailureToDownstream(node.id);
           return;
         }
         if (!completedNodes.has(dep)) {
-          runningNodes.delete(node.id);
-          return; // 等待依赖
+          return; // 等待依赖 — don't claim yet, another parent will re-trigger
         }
       }
+
+      // Atomically check-and-claim: all deps are satisfied, so claim the node.
+      // In JS single-threaded event loop, no await between has() and add()
+      // guarantees atomicity.
+      if (claimedNodes.has(node.id)) {
+        return;
+      }
+      claimedNodes.add(node.id);
+      runningNodes.add(node.id);
 
       const stats = this.runStats.get(run.runId);
       if (!stats) {
@@ -318,37 +339,38 @@ export class WorkflowEngine {
           durationMs: Date.now() - nodeStartTime,
         });
 
-        // 触发依赖节点，子节点错误已通过 failedNodes 追踪，此处只等待完成
+        // 触发依赖节点 — use allSettled so sibling branches are not
+        // short-circuited when one dependent fails.
         const depsOfNode = dependents.get(node.id) ?? new Set();
-        await Promise.all(Array.from(depsOfNode).map(dependentId => {
+        await Promise.allSettled(Array.from(depsOfNode).map(dependentId => {
           const dependentNode = dag.nodes.find(n => n.id === dependentId);
           if (dependentNode) {
-            return executeNode(dependentNode).catch(() => {
-              // 错误已在 executeNode 的 catch 块中记录到 failedNodes
-              // 不重新抛出，以允许其他并行分支继续执行
-            });
+            return executeNode(dependentNode);
           }
+          return Promise.resolve();
         }));
       } catch (error) {
         runningNodes.delete(node.id);
         failedNodes.add(node.id);
         nodeStats.error = error instanceof Error ? error.message : String(error);
-        
+
         // 记录错误指标
         metrics.inc(Metrics.AGENT_ERRORS_TOTAL, {
           workflow_id: definition.id,
           node_id: node.id,
         });
 
+        // Propagate failure to all downstream dependents so they don't stay pending
+        propagateFailureToDownstream(node.id);
+
         await this.handleNodeError(run.runId, node.id, error);
         throw error; // 重新抛出以触发工作流失败
       }
     };
 
-    // 启动根节点，根节点错误通过 failedNodes 追踪
-    await Promise.all(readyNodes.map(node => executeNode(node).catch(() => {
-      // 错误已记录到 failedNodes
-    })));
+    // 启动根节点 — use allSettled so all branches run to completion
+    // even if some fail; failures are tracked via failedNodes.
+    await Promise.allSettled(readyNodes.map(node => executeNode(node)));
 
     // 所有节点执行完毕后统一检查是否有失败
     if (failedNodes.size > 0) {
