@@ -42,7 +42,10 @@ export class LabelMatchStrategy implements DistributionStrategy {
         }
       }
 
-      if (matchCount > bestMatchCount) {
+      if (
+        matchCount > bestMatchCount ||
+        (matchCount === bestMatchCount && bestNode && node.currentLoad.activeTasks < bestNode.currentLoad.activeTasks)
+      ) {
         bestMatchCount = matchCount;
         bestNode = node;
       }

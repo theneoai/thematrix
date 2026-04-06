@@ -44,13 +44,15 @@ export class ResourceAwareStrategy implements DistributionStrategy {
       const cpuAvailable = 100 - node.currentLoad.cpuUsagePercent;
       const memAvailable = 100 - node.currentLoad.memoryUsagePercent;
 
-      // Weighted score: CPU availability (40%) + memory availability (40%) + task capacity (20%)
+      // Weighted score: CPU availability (35%) + memory availability (35%) + task capacity (30%)
+      // Task capacity accounts for both active and queued tasks
+      const totalTasks = node.currentLoad.activeTasks + node.currentLoad.queuedTasks;
       const taskCapacity =
         node.capabilities.maxConcurrentTasks > 0
-          ? (1 - node.currentLoad.activeTasks / node.capabilities.maxConcurrentTasks) * 100
+          ? Math.max(0, (1 - totalTasks / node.capabilities.maxConcurrentTasks) * 100)
           : 0;
 
-      const score = cpuAvailable * 0.4 + memAvailable * 0.4 + taskCapacity * 0.2;
+      const score = cpuAvailable * 0.35 + memAvailable * 0.35 + taskCapacity * 0.3;
 
       if (score > highestScore) {
         highestScore = score;

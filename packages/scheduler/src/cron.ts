@@ -190,16 +190,21 @@ export class CronScheduler {
   private getPartsInTimezone(date: Date, timezone: string): {
     year: number; month: number; day: number; hour: number; minute: number; weekday: number;
   } {
-    const fmt = new Intl.DateTimeFormat('en-US', {
-      timeZone: timezone,
-      year: 'numeric',
-      month: 'numeric',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: 'numeric',
-      weekday: 'short',
-      hour12: false,
-    });
+    let fmt: Intl.DateTimeFormat;
+    try {
+      fmt = new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone,
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: 'numeric',
+        weekday: 'short',
+        hour12: false,
+      });
+    } catch (err) {
+      throw new Error(`Invalid timezone "${timezone}": ${err instanceof Error ? err.message : String(err)}`);
+    }
 
     const parts = fmt.formatToParts(date);
     const get = (type: Intl.DateTimeFormatPartTypes): string =>
@@ -258,10 +263,23 @@ export class CronScheduler {
         minute = candidate.getMinutes();
       }
 
+      // Per cron spec: dayOfMonth and dayOfWeek use logical OR when both are specified (not *)
+      const dayOfMonthIsWild = parsed.dayOfMonth.values.length === 31;
+      const dayOfWeekIsWild = parsed.dayOfWeek.values.length === 7;
+      let dayMatch: boolean;
+      if (dayOfMonthIsWild && dayOfWeekIsWild) {
+        dayMatch = true; // Both wildcard — any day
+      } else if (dayOfMonthIsWild) {
+        dayMatch = parsed.dayOfWeek.values.includes(dayOfWeek); // Only dayOfWeek constrained
+      } else if (dayOfWeekIsWild) {
+        dayMatch = parsed.dayOfMonth.values.includes(dayOfMonth); // Only dayOfMonth constrained
+      } else {
+        dayMatch = parsed.dayOfMonth.values.includes(dayOfMonth) || parsed.dayOfWeek.values.includes(dayOfWeek); // Both specified — OR
+      }
+
       if (
         parsed.month.values.includes(month) &&
-        parsed.dayOfMonth.values.includes(dayOfMonth) &&
-        parsed.dayOfWeek.values.includes(dayOfWeek) &&
+        dayMatch &&
         parsed.hour.values.includes(hour) &&
         parsed.minute.values.includes(minute)
       ) {

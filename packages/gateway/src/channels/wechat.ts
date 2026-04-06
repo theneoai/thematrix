@@ -5,7 +5,7 @@
  * Supports: text messages, image messages, event callbacks
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import type {
   ChannelAdapter,
   IncomingRequest,
@@ -74,7 +74,6 @@ export class WeChatChannelAdapter implements ChannelAdapter {
 
     // Use timing-safe comparison
     try {
-      const { timingSafeEqual } = require('node:crypto');
       return timingSafeEqual(Buffer.from(computed, 'hex'), Buffer.from(msgSignature, 'hex'));
     } catch {
       return false;

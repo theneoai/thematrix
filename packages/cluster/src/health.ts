@@ -91,7 +91,11 @@ export class ClusterHealthMonitor {
       }
     });
 
-    await Promise.allSettled(checks);
+    // Add overall timeout to prevent health checks from blocking the event loop
+    await Promise.race([
+      Promise.allSettled(checks),
+      new Promise<void>((resolve) => setTimeout(resolve, 30_000)),
+    ]);
   }
 
   private markNodeOffline(nodeId: string): void {

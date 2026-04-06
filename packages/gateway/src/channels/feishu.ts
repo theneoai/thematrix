@@ -5,7 +5,7 @@
  * Supports: im.message.receive_v1, card action, URL verification challenge
  */
 
-import { createHash, createHmac } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import type {
   ChannelAdapter,
   IncomingRequest,
@@ -90,7 +90,7 @@ export class FeishuChannelAdapter implements ChannelAdapter {
 
     // Use timing-safe comparison to prevent timing attacks
     try {
-      return require('node:crypto').timingSafeEqual(
+      return timingSafeEqual(
         Buffer.from(signature, 'hex'),
         Buffer.from(expected, 'hex'),
       );
@@ -119,7 +119,7 @@ export class FeishuChannelAdapter implements ChannelAdapter {
     if (signingSecret) {
       const timestamp = Math.floor(Date.now() / 1000).toString();
       const stringToSign = `${timestamp}\n${signingSecret}`;
-      const sign = createHmac('sha256', stringToSign).update('').digest('base64');
+      const sign = createHmac('sha256', Buffer.from(stringToSign, 'utf-8')).update('').digest('base64');
       body.timestamp = timestamp;
       body.sign = sign;
     }

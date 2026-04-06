@@ -302,7 +302,12 @@ export default function ProvidersPage() {
                             style={{ width: `${Math.min(100, budget.usagePercent)}%` }}
                           />
                         </div>
-                        <span className="text-xs text-foreground-muted">{budget.usagePercent.toFixed(0)}%</span>
+                        <span className="text-xs text-foreground-muted">
+                          {budget.usagePercent > 100
+                            ? `${budget.usagePercent.toFixed(0)}% (over budget)`
+                            : `${budget.usagePercent.toFixed(0)}%`
+                          }
+                        </span>
                       </div>
                     </td>
                     <td className="px-4 py-3 text-foreground-muted capitalize">{budget.period ?? 'unlimited'}</td>
@@ -411,6 +416,7 @@ export default function ProvidersPage() {
               <input
                 id="cfg-rpm"
                 type="number"
+                min="1"
                 className={inputClassName}
                 placeholder="60"
                 value={configForm.rpm}
@@ -421,6 +427,7 @@ export default function ProvidersPage() {
               <input
                 id="cfg-tpm"
                 type="number"
+                min="1"
                 className={inputClassName}
                 placeholder="100000"
                 value={configForm.tpm}
@@ -431,6 +438,7 @@ export default function ProvidersPage() {
               <input
                 id="cfg-concurrent"
                 type="number"
+                min="1"
                 className={inputClassName}
                 placeholder="10"
                 value={configForm.maxConcurrent}
@@ -443,6 +451,7 @@ export default function ProvidersPage() {
             <input
               id="cfg-timeout"
               type="number"
+              min="1000"
               className={inputClassName}
               placeholder="30000"
               value={configForm.timeout}
@@ -492,6 +501,7 @@ export default function ProvidersPage() {
             <input
               id="budget-max-tokens"
               type="number"
+              min="1"
               className={inputClassName}
               placeholder="1000000"
               value={budgetForm.maxTokens}
@@ -503,6 +513,7 @@ export default function ProvidersPage() {
             <input
               id="budget-max-cost"
               type="number"
+              min="0.01"
               step="0.01"
               className={inputClassName}
               placeholder="50.00"

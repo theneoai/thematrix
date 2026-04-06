@@ -174,7 +174,7 @@ export class AlertManager {
     };
 
     this.activeAlerts.set(alert.id, alert);
-    this.alertHistory.push(alert);
+    this.alertHistory.push({ ...alert });
     // Cap alert history to prevent unbounded growth
     if (this.alertHistory.length > 10_000) {
       this.alertHistory.splice(0, this.alertHistory.length - 10_000);
