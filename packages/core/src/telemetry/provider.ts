@@ -196,6 +196,10 @@ export class InMemoryTelemetryProvider implements ITelemetryProvider {
       // flags is 2 hex chars (e.g., 01 for sampled)
       const flags = activeSpan.context.traceFlags.toString(16).padStart(2, '0');
       carrier['traceparent'] = `00-${activeSpan.context.traceId}-${activeSpan.context.spanId}-${flags}`;
+      // Propagate tracestate if present
+      if (activeSpan.context.traceState) {
+        carrier['tracestate'] = activeSpan.context.traceState;
+      }
     }
   }
 
@@ -210,6 +214,7 @@ export class InMemoryTelemetryProvider implements ITelemetryProvider {
       traceId: parts[1],
       spanId: parts[2],
       traceFlags: parseInt(parts[3], 16),
+      traceState: carrier['tracestate'],
     };
   }
 

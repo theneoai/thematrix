@@ -417,17 +417,14 @@ export class CognitiveMemoryManager implements ICognitiveMemoryManager {
     const factor = options.decayFactor ?? this.decayFactor;
     const minImp = options.minImportance ?? this.minImportance;
 
-    let sql = 'UPDATE episodic_memory SET importance = importance * ? WHERE 1=1';
-    const params: unknown[] = [factor];
+    let updateSql = 'UPDATE episodic_memory SET importance = importance * ? WHERE 1=1';
+    const updateParams: unknown[] = [factor];
 
     if (options.agentId) {
-      sql += ' AND agent_id = ?';
-      params.push(options.agentId);
+      updateSql += ' AND agent_id = ?';
+      updateParams.push(options.agentId);
     }
 
-    this.db.prepare(sql).run(...params);
-
-    // Remove memories below threshold
     let deleteSql = 'DELETE FROM episodic_memory WHERE importance < ?';
     const deleteParams: unknown[] = [minImp];
 
@@ -436,8 +433,13 @@ export class CognitiveMemoryManager implements ICognitiveMemoryManager {
       deleteParams.push(options.agentId);
     }
 
-    const deleteResult = this.db.prepare(deleteSql).run(...deleteParams);
-    const forgotten = deleteResult.changes;
+    // Run decay + cleanup atomically in a single transaction
+    const decayTransaction = this.db.transaction(() => {
+      this.db.prepare(updateSql).run(...updateParams);
+      return this.db.prepare(deleteSql).run(...deleteParams).changes;
+    });
+
+    const forgotten = decayTransaction();
 
     if (forgotten > 0) {
       logger.info(`Memory decay: ${forgotten} memories forgotten (below threshold ${minImp})`);

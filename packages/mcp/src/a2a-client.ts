@@ -16,14 +16,19 @@ import { Logger } from '@thematrix/utils';
 const logger = new Logger({ prefix: 'A2AClient' });
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_SSE_IDLE_TIMEOUT_MS = 120_000;
 
 export class A2AClient implements IA2AClient {
   private readonly timeoutMs: number;
   private readonly headers: Record<string, string>;
   private nextRequestId = 1;
 
-  constructor(options: { timeoutMs?: number; headers?: Record<string, string> } = {}) {
+  /** SSE 流空闲超时 (ms): 超过此时间无事件则断开 */
+  private readonly sseIdleTimeoutMs: number;
+
+  constructor(options: { timeoutMs?: number; sseIdleTimeoutMs?: number; headers?: Record<string, string> } = {}) {
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.sseIdleTimeoutMs = options.sseIdleTimeoutMs ?? DEFAULT_SSE_IDLE_TIMEOUT_MS;
     this.headers = options.headers ?? {};
   }
 
@@ -112,11 +117,24 @@ export class A2AClient implements IA2AClient {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const resetIdleTimer = (): void => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        logger.warn(`SSE idle timeout (${this.sseIdleTimeoutMs}ms) for task ${taskId}, closing stream`);
+        reader.cancel().catch(() => {});
+      }, this.sseIdleTimeoutMs);
+    };
 
     try {
+      resetIdleTimer();
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+
+        resetIdleTimer();
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
@@ -138,6 +156,7 @@ export class A2AClient implements IA2AClient {
         }
       }
     } finally {
+      if (idleTimer) clearTimeout(idleTimer);
       reader.releaseLock();
     }
   }

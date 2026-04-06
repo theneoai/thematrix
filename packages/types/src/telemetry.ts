@@ -131,6 +131,10 @@ export const TelemetryAttributes = {
   // Token 成本
   TOKEN_COST_USD: 'thematrix.token.cost_usd',
   TOKEN_BUDGET_REMAINING: 'thematrix.token.budget_remaining',
+
+  // Guardrail 属性
+  GUARDRAIL_ID: 'thematrix.guardrail.id',
+  GUARDRAIL_TYPE: 'thematrix.guardrail.type',
 } as const;
 
 /**

@@ -156,16 +156,24 @@ export class MCPServer implements IMCPServer {
   }
 
   private handleInitialize(id: string | number, params?: Record<string, unknown>): JsonRpcResponse {
-    // Version negotiation: pick the best mutually-supported version
+    // Version negotiation: client must request a version we support
     const clientRequestedVersion = typeof params?.protocolVersion === 'string'
       ? params.protocolVersion
       : undefined;
 
-    this.negotiatedVersion = LATEST_PROTOCOL_VERSION;
-    if (clientRequestedVersion && SUPPORTED_PROTOCOL_VERSIONS.includes(clientRequestedVersion as typeof SUPPORTED_PROTOCOL_VERSIONS[number])) {
-      this.negotiatedVersion = clientRequestedVersion;
+    if (clientRequestedVersion && !SUPPORTED_PROTOCOL_VERSIONS.includes(clientRequestedVersion as typeof SUPPORTED_PROTOCOL_VERSIONS[number])) {
+      logger.warn(`Client requested unsupported protocol version: ${clientRequestedVersion}`);
+      return {
+        jsonrpc: '2.0',
+        id,
+        error: {
+          code: -32602,
+          message: `Unsupported protocol version: ${clientRequestedVersion}. Supported: ${SUPPORTED_PROTOCOL_VERSIONS.join(', ')}`,
+        },
+      };
     }
 
+    this.negotiatedVersion = clientRequestedVersion ?? LATEST_PROTOCOL_VERSION;
     logger.info(`Protocol version negotiated: ${this.negotiatedVersion} (client requested: ${clientRequestedVersion ?? 'none'})`);
 
     return {

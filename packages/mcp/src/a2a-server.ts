@@ -58,6 +58,10 @@ export interface A2AServerConfig {
   host?: string;
   /** 请求体大小限制 (bytes, default: 1MB) */
   maxBodySize?: number;
+  /** 已完成任务最大保留数量 (default: 10000) */
+  maxTasks?: number;
+  /** 已完成任务存活时间 (ms, default: 1h) */
+  taskTtlMs?: number;
 }
 
 export class A2AServer implements IA2AServer {
@@ -68,11 +72,15 @@ export class A2AServer implements IA2AServer {
   private taskHandler?: A2ATaskHandler;
   private server: Server | null = null;
   private readonly maxBodySize: number;
+  private readonly maxTasks: number;
+  private readonly taskTtlMs: number;
 
   constructor(config: A2AServerConfig, registry?: AgentRegistry) {
     this.config = config;
     this.registry = registry ?? new AgentRegistry();
     this.maxBodySize = config.maxBodySize ?? MAX_BODY_SIZE;
+    this.maxTasks = config.maxTasks ?? 10_000;
+    this.taskTtlMs = config.taskTtlMs ?? 3_600_000; // 1 hour
   }
 
   registerAgent(card: AgentCard): void {
@@ -234,6 +242,9 @@ export class A2AServer implements IA2AServer {
     task.status = 'working';
     task.updatedAt = new Date();
 
+    // Evict stale completed tasks if over limit
+    this.evictStaleTasks();
+
     // Notify SSE subscribers
     this.notifySubscribers(taskId, { type: 'status-update', taskId, status: 'working' });
 
@@ -298,6 +309,10 @@ export class A2AServer implements IA2AServer {
 
   private handleTaskSubscribe(res: ServerResponse, _id: number, params: Record<string, unknown>): void {
     const taskId = typeof params.id === 'string' ? params.id : '';
+    if (!taskId) {
+      this.sendJsonRpcError(res, _id, -32602, 'Missing required parameter: id');
+      return;
+    }
 
     // Switch to SSE mode
     res.writeHead(200, {
@@ -317,9 +332,15 @@ export class A2AServer implements IA2AServer {
       res.write(`data: ${JSON.stringify({ type: 'status-update', taskId, status: task.status })}\n\n`);
     }
 
-    // Cleanup on disconnect
+    // Cleanup on disconnect: remove client, and delete empty Set to prevent leak
     const cleanup = (): void => {
-      this.sseClients.get(taskId)?.delete(res);
+      const clients = this.sseClients.get(taskId);
+      if (clients) {
+        clients.delete(res);
+        if (clients.size === 0) {
+          this.sseClients.delete(taskId);
+        }
+      }
     };
     res.on('close', cleanup);
     res.on('error', cleanup);
@@ -328,6 +349,34 @@ export class A2AServer implements IA2AServer {
   // -----------------------------------------------------------------------
   // Helpers
   // -----------------------------------------------------------------------
+
+  private evictStaleTasks(): void {
+    if (this.tasks.size <= this.maxTasks) return;
+
+    const now = Date.now();
+    const terminalStatuses: Set<A2ATaskStatus> = new Set(['completed', 'failed', 'cancelled']);
+
+    // First pass: remove expired terminal tasks
+    for (const [id, task] of this.tasks) {
+      if (terminalStatuses.has(task.status) && now - task.updatedAt.getTime() > this.taskTtlMs) {
+        this.tasks.delete(id);
+        this.sseClients.delete(id);
+      }
+    }
+
+    // Second pass: if still over limit, remove oldest terminal tasks
+    if (this.tasks.size > this.maxTasks) {
+      const terminalEntries = Array.from(this.tasks.entries())
+        .filter(([, t]) => terminalStatuses.has(t.status))
+        .sort(([, a], [, b]) => a.updatedAt.getTime() - b.updatedAt.getTime());
+
+      const toRemove = this.tasks.size - this.maxTasks;
+      for (let i = 0; i < Math.min(toRemove, terminalEntries.length); i++) {
+        this.tasks.delete(terminalEntries[i][0]);
+        this.sseClients.delete(terminalEntries[i][0]);
+      }
+    }
+  }
 
   private notifySubscribers(taskId: string, event: { type: string; taskId: string; status?: A2ATaskStatus; artifact?: A2AArtifact; message?: A2AMessage }): void {
     const clients = this.sseClients.get(taskId);

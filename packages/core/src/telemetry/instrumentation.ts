@@ -135,8 +135,8 @@ export function traceGuardrailCheck(
   return telemetry.startSpan(SpanName.GUARDRAIL_CHECK, {
     kind: 'internal',
     attributes: {
-      'thematrix.guardrail.id': guardrailId,
-      'thematrix.guardrail.type': guardrailType,
+      [Attr.GUARDRAIL_ID]: guardrailId,
+      [Attr.GUARDRAIL_TYPE]: guardrailType,
     },
   });
 }
