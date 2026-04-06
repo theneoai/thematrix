@@ -42,7 +42,16 @@ export class LocalExecutionBackend implements ExecutionBackend {
     logger.info(`Local backend initialized, workDir=${this.config.workDir ?? process.cwd()}, maxConcurrent=${this.maxConcurrent}`);
   }
 
+  private static readonly MAX_TIMEOUT_MS = 3_600_000; // 1 hour
+  private static readonly MIN_TIMEOUT_MS = 1_000;
+
   async execute(task: ExecutionTask): Promise<ExecutionResult> {
+    // Prevent duplicate taskId from overwriting an active task
+    const existing = this.tasks.get(task.taskId);
+    if (existing && (existing.status === 'running' || existing.status === 'pending')) {
+      throw new Error(`Task ${task.taskId} is already running`);
+    }
+
     const startedAt = new Date();
     const abortController = new AbortController();
 
@@ -196,7 +205,8 @@ export class LocalExecutionBackend implements ExecutionBackend {
     });
 
     // Create a timeout promise if timeout is specified
-    const timeoutMs = task.timeout ?? 300_000; // default 5 minutes
+    const rawTimeout = task.timeout ?? 300_000; // default 5 minutes
+    const timeoutMs = Math.min(Math.max(rawTimeout, LocalExecutionBackend.MIN_TIMEOUT_MS), LocalExecutionBackend.MAX_TIMEOUT_MS);
     let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeoutTimer = setTimeout(() => reject(new Error(`Task timed out after ${timeoutMs}ms`)), timeoutMs);

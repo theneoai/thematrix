@@ -21,3 +21,18 @@ export {
 export { EvalReporter, type EvalSummary, type MetricSummary } from './reporter.js';
 
 export { EvalSuiteLoader } from './suite-loader.js';
+
+// Trajectory Evaluation
+export {
+  TrajectoryEvaluator,
+  type Trajectory,
+  type TrajectoryStep,
+  type TrajectoryEvalResult,
+  type TrajectoryMetricFunction,
+  TaskCompletionMetric,
+  StepEfficiencyMetric,
+  ToolAccuracyMetric,
+  ErrorRecoveryMetric,
+  TokenEfficiencyMetric,
+  LLMTrajectoryJudgeMetric,
+} from './trajectory.js';

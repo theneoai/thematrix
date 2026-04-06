@@ -14,6 +14,8 @@ import type {
   LLMAdapter,
   AgentDefinition,
   DomainEvent,
+  ITelemetryProvider,
+  ICognitiveMemoryManager,
 } from '@thematrix/types';
 import { EventTypes } from '@thematrix/types';
 import { Logger, generateId } from '@thematrix/utils';
@@ -30,6 +32,8 @@ export interface DynamicWorkflowExecutorOptions {
   agentRegistry: AgentRegistry;
   llmAdapterFactory: (config: { provider: string; model: string }) => LLMAdapter;
   messageBroker: IMessageBroker;
+  telemetry?: ITelemetryProvider;
+  cognitiveMemory?: ICognitiveMemoryManager;
 }
 
 export class DynamicWorkflowExecutor {
@@ -38,6 +42,8 @@ export class DynamicWorkflowExecutor {
   private agentRegistry: AgentRegistry;
   private llmAdapterFactory: (config: { provider: string; model: string }) => LLMAdapter;
   private messageBroker: IMessageBroker;
+  private telemetry?: ITelemetryProvider;
+  private cognitiveMemory?: ICognitiveMemoryManager;
 
   constructor(options: DynamicWorkflowExecutorOptions) {
     this.eventBus = options.eventBus;
@@ -45,6 +51,8 @@ export class DynamicWorkflowExecutor {
     this.agentRegistry = options.agentRegistry;
     this.llmAdapterFactory = options.llmAdapterFactory;
     this.messageBroker = options.messageBroker;
+    this.telemetry = options.telemetry;
+    this.cognitiveMemory = options.cognitiveMemory;
   }
 
   async execute(definition: WorkflowDefinition, run: WorkflowRun): Promise<void> {
@@ -83,6 +91,8 @@ export class DynamicWorkflowExecutor {
       messageBroker: this.messageBroker,
       memory: this.memory,
       llmAdapterFactory: this.llmAdapterFactory,
+      telemetry: this.telemetry,
+      cognitiveMemory: this.cognitiveMemory,
     });
 
     // Create orchestrator runtime
@@ -179,6 +189,8 @@ export class DynamicWorkflowExecutor {
       llmAdapter,
       memory: this.memory,
       eventBus: this.eventBus,
+      telemetry: this.telemetry,
+      cognitiveMemory: this.cognitiveMemory,
     });
 
     await runtime.initialize();

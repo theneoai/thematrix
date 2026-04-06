@@ -33,6 +33,9 @@ type PendingRequest = {
   reject: (error: Error) => void;
 };
 
+/** MCP 协议版本: 优先使用最新版 */
+const PREFERRED_PROTOCOL_VERSION = '2025-03-26';
+
 export class MCPClient implements IMCPClient {
   private config: MCPClientConfig;
   private connected = false;
@@ -40,6 +43,10 @@ export class MCPClient implements IMCPClient {
   private pending = new Map<number, PendingRequest>();
   private static readonly MAX_REQUEST_ID = 2 ** 31 - 1;
   private static readonly REQUEST_TIMEOUT_MS = 30_000;
+  /** 与服务端协商后的协议版本 */
+  private negotiatedVersion: string = PREFERRED_PROTOCOL_VERSION;
+  /** 服务端支持的能力 */
+  private serverCapabilities: Record<string, unknown> = {};
 
   // stdio transport state
   private childProcess: ChildProcess | null = null;
@@ -154,9 +161,9 @@ export class MCPClient implements IMCPClient {
       this.handleResponseLine(line);
     });
 
-    // Send initialize request
+    // Send initialize request with preferred version
     const initResult = (await this.sendRequest('initialize', {
-      protocolVersion: '2024-11-05',
+      protocolVersion: PREFERRED_PROTOCOL_VERSION,
       capabilities: {},
       clientInfo: {
         name: 'thematrix',
@@ -164,7 +171,10 @@ export class MCPClient implements IMCPClient {
       },
     })) as Record<string, unknown>;
 
-    logger.info(`Server initialized: ${JSON.stringify(initResult.serverInfo)}`);
+    // Store negotiated version and capabilities
+    this.negotiatedVersion = (initResult.protocolVersion as string) ?? PREFERRED_PROTOCOL_VERSION;
+    this.serverCapabilities = (initResult.capabilities as Record<string, unknown>) ?? {};
+    logger.info(`Server initialized (protocol: ${this.negotiatedVersion}): ${JSON.stringify(initResult.serverInfo)}`);
 
     // Send initialized notification
     this.sendNotification('notifications/initialized', {});
@@ -176,9 +186,9 @@ export class MCPClient implements IMCPClient {
       throw new Error('Expected HTTP transport config');
     }
 
-    // Send initialize request via HTTP
+    // Send initialize request via HTTP with preferred version
     const initResult = (await this.sendRequest('initialize', {
-      protocolVersion: '2024-11-05',
+      protocolVersion: PREFERRED_PROTOCOL_VERSION,
       capabilities: {},
       clientInfo: {
         name: 'thematrix',
@@ -186,7 +196,9 @@ export class MCPClient implements IMCPClient {
       },
     })) as Record<string, unknown>;
 
-    logger.info(`Server initialized: ${JSON.stringify(initResult.serverInfo)}`);
+    this.negotiatedVersion = (initResult.protocolVersion as string) ?? PREFERRED_PROTOCOL_VERSION;
+    this.serverCapabilities = (initResult.capabilities as Record<string, unknown>) ?? {};
+    logger.info(`Server initialized (protocol: ${this.negotiatedVersion}): ${JSON.stringify(initResult.serverInfo)}`);
   }
 
   private rejectAllPending(error: Error): void {
@@ -256,8 +268,21 @@ export class MCPClient implements IMCPClient {
 
     if (this.config.transport.type === 'stdio') {
       this.writeToStdin(message);
+    } else if (this.config.transport.type === 'http') {
+      // HTTP transport: fire-and-forget POST (no response expected)
+      const transport = this.config.transport;
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...transport.headers,
+      };
+      fetch(transport.url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(message),
+      }).catch((err) => {
+        logger.warn(`Failed to send notification ${method}: ${(err as Error).message}`);
+      });
     }
-    // HTTP transport: fire-and-forget POST (no response expected)
   }
 
   private writeToStdin(message: object): void {

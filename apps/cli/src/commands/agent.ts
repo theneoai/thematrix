@@ -62,7 +62,10 @@ export function createAgentCommand(): Command {
       try {
         const spinner = startSpinner(`Creating agent: ${name}...`);
 
-        const id = name.toLowerCase().replace(/\s+/g, '-');
+        const id = name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+        if (!id) {
+          throw new Error('Agent name must contain at least one alphanumeric character');
+        }
         const content = AGENT_TEMPLATE
           .replace(/{{id}}/g, id)
           .replace(/{{name}}/g, name);
@@ -73,6 +76,9 @@ export function createAgentCommand(): Command {
         }
 
         const filePath = join(outputDir, `${id}.agent.yaml`);
+        if (existsSync(filePath)) {
+          throw new Error(`Agent file already exists: ${filePath}\nUse a different name or delete the existing file.`);
+        }
         await writeFile(filePath, content);
 
         stopSpinner(true, `Created agent: ${filePath}`);

@@ -7,13 +7,15 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 const DEFAULT_TIMEOUT_MS = 15_000;
 
 async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  // Only create our own abort controller if caller didn't provide a signal
+  const hasExternalSignal = !!options?.signal;
+  const controller = hasExternalSignal ? undefined : new AbortController();
+  const timer = controller ? setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS) : undefined;
 
   try {
     const res = await fetch(`${API_BASE}${path}`, {
       ...options,
-      signal: options?.signal ?? controller.signal,
+      signal: options?.signal ?? controller!.signal,
       headers: {
         'Content-Type': 'application/json',
         ...options?.headers,
@@ -26,7 +28,7 @@ async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
 
     return res.json() as Promise<T>;
   } finally {
-    clearTimeout(timer);
+    if (timer) clearTimeout(timer);
   }
 }
 

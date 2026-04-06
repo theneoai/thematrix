@@ -28,12 +28,18 @@ interface JsonRpcResponse {
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<MCPToolResult>;
 
+/** MCP 协议版本: 支持 2025-03-26 (latest) 和 2024-11-05 (legacy) */
+const SUPPORTED_PROTOCOL_VERSIONS = ['2025-03-26', '2024-11-05'] as const;
+const LATEST_PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[0];
+
 export class MCPServer implements IMCPServer {
   private config: MCPServerConfig;
   private tools = new Map<string, { tool: MCPTool; handler: ToolHandler }>();
   private rl: readline.Interface | null = null;
   private initialized = false;
   private running = false;
+  /** 与客户端协商后的协议版本 */
+  private negotiatedVersion: string = LATEST_PROTOCOL_VERSION;
 
   constructor(config: MCPServerConfig) {
     this.config = config;
@@ -129,7 +135,7 @@ export class MCPServer implements IMCPServer {
 
     switch (method) {
       case 'initialize':
-        return this.handleInitialize(id);
+        return this.handleInitialize(id, params);
 
       case 'tools/list':
         return this.handleToolsList(id);
@@ -149,14 +155,40 @@ export class MCPServer implements IMCPServer {
     }
   }
 
-  private handleInitialize(id: string | number): JsonRpcResponse {
+  private handleInitialize(id: string | number, params?: Record<string, unknown>): JsonRpcResponse {
+    // Version negotiation: client must request a version we support
+    const clientRequestedVersion = typeof params?.protocolVersion === 'string'
+      ? params.protocolVersion
+      : undefined;
+
+    if (clientRequestedVersion && !SUPPORTED_PROTOCOL_VERSIONS.includes(clientRequestedVersion as typeof SUPPORTED_PROTOCOL_VERSIONS[number])) {
+      logger.warn(`Client requested unsupported protocol version: ${clientRequestedVersion}`);
+      return {
+        jsonrpc: '2.0',
+        id,
+        error: {
+          code: -32602,
+          message: `Unsupported protocol version: ${clientRequestedVersion}. Supported: ${SUPPORTED_PROTOCOL_VERSIONS.join(', ')}`,
+        },
+      };
+    }
+
+    this.negotiatedVersion = clientRequestedVersion ?? LATEST_PROTOCOL_VERSION;
+    logger.info(`Protocol version negotiated: ${this.negotiatedVersion} (client requested: ${clientRequestedVersion ?? 'none'})`);
+
     return {
       jsonrpc: '2.0',
       id,
       result: {
-        protocolVersion: '2024-11-05',
+        protocolVersion: this.negotiatedVersion,
         capabilities: {
           tools: {},
+          // MCP v1.27+ capability extensions
+          ...(this.negotiatedVersion === '2025-03-26' ? {
+            resources: {},
+            prompts: {},
+            logging: {},
+          } : {}),
         },
         serverInfo: {
           name: this.config.name,

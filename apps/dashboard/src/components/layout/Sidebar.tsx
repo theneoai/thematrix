@@ -55,7 +55,7 @@ export function Sidebar() {
       <div className="border-t border-border p-4">
         <div className="text-xs text-foreground-subtle">
           <kbd className="rounded border border-border bg-background-tertiary px-1.5 py-0.5 text-[10px]">
-            Cmd+K
+            {typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘K' : 'Ctrl+K'}
           </kbd>
           <span className="ml-2">Quick search</span>
         </div>

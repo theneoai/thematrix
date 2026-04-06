@@ -44,9 +44,18 @@ export class DockerExecutionBackend implements ExecutionBackend {
     logger.info(`Docker backend initialized, image=${this.config.image}, host=${this.dockerHost}`);
   }
 
+  private static readonly MAX_TIMEOUT_MS = 3_600_000;
+  private static readonly MIN_TIMEOUT_MS = 1_000;
+
   async execute(task: ExecutionTask): Promise<ExecutionResult> {
     if (!this.config) {
       throw new Error('Docker backend not initialized. Call initialize() first.');
+    }
+
+    // Prevent duplicate taskId from overwriting an active task
+    const existing = this.containers.get(task.taskId);
+    if (existing && (existing.status === 'running' || existing.status === 'pending')) {
+      throw new Error(`Task ${task.taskId} is already running`);
     }
 
     const startedAt = new Date();
@@ -75,7 +84,9 @@ export class DockerExecutionBackend implements ExecutionBackend {
       await this.startContainer(containerId);
 
       // Wait for the container to finish
-      const exitCode = await this.waitForContainer(containerId, task.timeout ?? 300_000);
+      const rawTimeout = task.timeout ?? 300_000;
+      const timeoutMs = Math.min(Math.max(rawTimeout, DockerExecutionBackend.MIN_TIMEOUT_MS), DockerExecutionBackend.MAX_TIMEOUT_MS);
+      const exitCode = await this.waitForContainer(containerId, timeoutMs);
 
       const completedAt = new Date();
       record.completedAt = completedAt;

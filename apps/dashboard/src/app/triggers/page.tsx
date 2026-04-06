@@ -392,7 +392,7 @@ export default function TriggersPage() {
               variant="primary"
               onClick={handleTriggerSubmit}
               loading={triggerSaving}
-              disabled={!triggerForm.name || !triggerForm.eventType || !triggerForm.workflowId}
+              disabled={!triggerForm.name.trim() || !triggerForm.eventType.trim() || !triggerForm.workflowId.trim()}
             >
               {editingTrigger ? 'Save Changes' : 'Create'}
             </Button>
@@ -489,7 +489,7 @@ export default function TriggersPage() {
               variant="primary"
               onClick={handleScheduleSubmit}
               loading={scheduleSaving}
-              disabled={!scheduleForm.name || !scheduleForm.cron || !scheduleForm.workflowId}
+              disabled={!scheduleForm.name.trim() || !scheduleForm.cron.trim() || !scheduleForm.workflowId.trim()}
             >
               {editingSchedule ? 'Save Changes' : 'Create'}
             </Button>

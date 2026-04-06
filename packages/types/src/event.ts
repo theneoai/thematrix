@@ -127,4 +127,19 @@ export const EventTypes = {
   // Eval events
   EVAL_STARTED: 'eval.started',
   EVAL_COMPLETED: 'eval.completed',
+
+  // A2A protocol events
+  A2A_TASK_RECEIVED: 'a2a.task.received',
+  A2A_TASK_SENT: 'a2a.task.sent',
+  A2A_TASK_COMPLETED: 'a2a.task.completed',
+  A2A_TASK_FAILED: 'a2a.task.failed',
+  A2A_AGENT_DISCOVERED: 'a2a.agent.discovered',
+
+  // Telemetry events
+  TELEMETRY_SPAN_EXPORTED: 'telemetry.span.exported',
+
+  // Cognitive memory events
+  MEMORY_EPISODE_RECORDED: 'memory.episode.recorded',
+  MEMORY_CONSOLIDATED: 'memory.consolidated',
+  MEMORY_DECAYED: 'memory.decayed',
 } as const;

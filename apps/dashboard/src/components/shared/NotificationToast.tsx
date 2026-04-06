@@ -16,25 +16,32 @@ export function NotificationToast() {
   if (notifications.length === 0) return null;
 
   return (
-    <div className="fixed bottom-4 right-4 z-[100] flex flex-col gap-2 max-w-sm">
+    <div
+      className="fixed bottom-4 right-4 z-[100] flex flex-col gap-2 max-w-sm"
+      role="region"
+      aria-label="Notifications"
+    >
       {notifications.map((n) => {
         const style = typeStyles[n.type];
         return (
           <div
             key={n.id}
+            role={n.type === 'error' ? 'alert' : 'status'}
+            aria-live={n.type === 'error' ? 'assertive' : 'polite'}
             className={clsx(
-              'rounded-lg border px-4 py-3 shadow-lg animate-in slide-in-from-right',
+              'rounded-lg border px-4 py-3 shadow-lg',
               style.bg,
             )}
           >
             <div className="flex items-start gap-2">
-              <span className="text-sm mt-0.5">{style.icon}</span>
+              <span className="text-sm mt-0.5" aria-hidden="true">{style.icon}</span>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-foreground">{n.title}</p>
                 {n.message && <p className="text-xs text-foreground-muted mt-0.5">{n.message}</p>}
               </div>
               <button
                 onClick={() => removeNotification(n.id)}
+                aria-label="Dismiss notification"
                 className="text-foreground-subtle hover:text-foreground text-sm"
               >
                 &times;

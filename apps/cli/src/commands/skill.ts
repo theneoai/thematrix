@@ -110,8 +110,14 @@ export function createSkillCommand(): Command {
       try {
         const spinner = startSpinner(`Creating skill: ${name}...`);
 
-        const id = name.toLowerCase().replace(/\s+/g, '-');
+        const id = name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+        if (!id) {
+          throw new Error('Skill name must contain at least one alphanumeric character');
+        }
         const outputDir = resolve(join(options.output, id));
+        if (existsSync(outputDir)) {
+          throw new Error(`Skill directory already exists: ${outputDir}\nUse a different name or delete the existing directory.`);
+        }
         
         await mkdir(outputDir, { recursive: true });
 

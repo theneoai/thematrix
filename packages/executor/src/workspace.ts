@@ -6,7 +6,7 @@
 
 import { mkdir, rm, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { WorkspaceConfig } from '@thematrix/types';
@@ -121,8 +121,32 @@ export class WorkspaceManager {
 
   // ---- Private helpers ----
 
+  /** Validate that a resolved path is under the expected base directory */
+  private validateBasePath(basePath: string): string {
+    const resolved = resolve(basePath);
+    const systemTmp = tmpdir();
+    // basePath must be under tmpdir or be an absolute path that doesn't traverse
+    if (!resolved.startsWith(systemTmp) && !resolve(resolved).startsWith('/')) {
+      throw new Error(`Invalid basePath: "${basePath}" resolves outside allowed directories`);
+    }
+    return resolved;
+  }
+
+  /** Validate git branch name to prevent shell injection */
+  private validateGitBranch(branch: string): string {
+    // Allow alphanumeric, dots, hyphens, underscores, slashes (standard git branch chars)
+    if (!/^[a-zA-Z0-9._\/-]+$/.test(branch)) {
+      throw new Error(`Invalid git branch name: "${branch}"`);
+    }
+    // Reject dangerous patterns
+    if (branch.includes('..') || branch.startsWith('-') || branch.endsWith('.lock')) {
+      throw new Error(`Invalid git branch name: "${branch}"`);
+    }
+    return branch;
+  }
+
   private async createTempDir(config: WorkspaceConfig): Promise<string> {
-    const base = config.basePath ?? tmpdir();
+    const base = config.basePath ? this.validateBasePath(config.basePath) : tmpdir();
     await mkdir(base, { recursive: true });
     return mkdtemp(join(base, 'thematrix-'));
   }
@@ -132,8 +156,8 @@ export class WorkspaceManager {
       throw new Error('git-worktree workspace requires gitRepo to be set');
     }
 
-    const branch = config.gitBranch ?? 'main';
-    const base = config.basePath ?? join(tmpdir(), 'thematrix-worktrees');
+    const branch = this.validateGitBranch(config.gitBranch ?? 'main');
+    const base = config.basePath ? this.validateBasePath(config.basePath) : join(tmpdir(), 'thematrix-worktrees');
     await mkdir(base, { recursive: true });
 
     const worktreePath = join(base, workspaceId);
@@ -168,7 +192,7 @@ export class WorkspaceManager {
   }
 
   private async createSharedVolume(config: WorkspaceConfig, workspaceId: string): Promise<string> {
-    const base = config.basePath ?? join(tmpdir(), 'thematrix-shared');
+    const base = config.basePath ? this.validateBasePath(config.basePath) : join(tmpdir(), 'thematrix-shared');
     const volumePath = join(base, workspaceId);
     await mkdir(volumePath, { recursive: true });
     return volumePath;

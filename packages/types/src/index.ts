@@ -21,3 +21,12 @@ export * from './cluster.js';
 
 // Export MCP types
 export * from './mcp.js';
+
+// Export A2A protocol types
+export * from './a2a.js';
+
+// Export telemetry types
+export * from './telemetry.js';
+
+// Export cognitive memory types
+export * from './cognitive-memory.js';

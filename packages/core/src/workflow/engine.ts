@@ -13,6 +13,8 @@ import type {
   AgentDefinition,
   DomainEvent,
   IApprovalManager,
+  ITelemetryProvider,
+  ICognitiveMemoryManager,
 } from '@thematrix/types';
 import { EventTypes } from '@thematrix/types';
 import { Logger, generateWorkflowRunId, sleep } from '@thematrix/utils';
@@ -23,6 +25,7 @@ import { DynamicWorkflowExecutor } from './dynamic.js';
 import { ApprovalManager } from './approval.js';
 import { WorkflowError, ResourceNotFoundError, classifyError } from '../error/index.js';
 import { metrics, Metrics } from '../metrics/index.js';
+import { traceWorkflowNode } from '../telemetry/instrumentation.js';
 
 const logger = new Logger({ prefix: 'WorkflowEngine' });
 
@@ -48,6 +51,10 @@ export interface WorkflowEngineOptions {
    * Approval manager for human-in-the-loop approval gates
    */
   approvalManager?: IApprovalManager;
+  /** Telemetry provider for distributed tracing (optional) */
+  telemetry?: ITelemetryProvider;
+  /** Cognitive memory manager, passed through to AgentRuntime instances (optional) */
+  cognitiveMemory?: ICognitiveMemoryManager;
 }
 
 interface WorkflowStats {
@@ -70,6 +77,8 @@ export class WorkflowEngine {
   private agentIdMap: Map<string, string>;
   private messageBroker?: IMessageBroker;
   private approvalManager?: IApprovalManager;
+  private telemetry?: ITelemetryProvider;
+  private cognitiveMemory?: ICognitiveMemoryManager;
   private runs = new Map<string, WorkflowRun>();
   private runStats = new Map<string, WorkflowStats>();
   private activeAgents = new Map<string, Map<string, AgentRuntime>>();
@@ -86,6 +95,8 @@ export class WorkflowEngine {
     this.agentIdMap = options.agentIdMap ?? new Map();
     this.messageBroker = options.messageBroker;
     this.approvalManager = options.approvalManager;
+    this.telemetry = options.telemetry;
+    this.cognitiveMemory = options.cognitiveMemory;
     this.globalTimeoutMs = options.globalTimeoutMs ?? 300000; // 5分钟默认
     this.maxConcurrentWorkflows = options.maxConcurrentWorkflows ?? 10;
   }
@@ -533,6 +544,8 @@ export class WorkflowEngine {
       agentRegistry: this.agentRegistry,
       llmAdapterFactory: this.llmAdapterFactory,
       messageBroker: this.messageBroker,
+      telemetry: this.telemetry,
+      cognitiveMemory: this.cognitiveMemory,
     });
 
     await executor.execute(definition, run);
@@ -548,13 +561,26 @@ export class WorkflowEngine {
       throw new ResourceNotFoundError(`Agent not found: ${node.agentId}`, 'agent', node.agentId);
     }
 
+    // Start telemetry span for workflow node execution
+    const nodeSpan = this.telemetry
+      ? traceWorkflowNode(this.telemetry, definition.id, run.runId, node.id)
+      : undefined;
+
     const agentDef = await this.resolveAgentDefinition(agentRef);
     const runtime = await this.createAgentRuntime(agentDef, run.runId);
 
     try {
       const input = this.prepareNodeInput(node, run.context);
       const output = await runtime.runTurn(JSON.stringify(input));
+      if (nodeSpan) { nodeSpan.setStatus({ code: 'ok' }); nodeSpan.end(); }
       return { result: output };
+    } catch (error) {
+      if (nodeSpan) {
+        nodeSpan.setStatus({ code: 'error', message: error instanceof Error ? error.message : String(error) });
+        if (error instanceof Error) nodeSpan.recordException(error);
+        nodeSpan.end();
+      }
+      throw error;
     } finally {
       await runtime.stop();
     }
@@ -706,6 +732,8 @@ export class WorkflowEngine {
       // Pass through agent-level guardrails and outputSchema from the definition
       guardrails: definition.guardrails,
       outputSchema: definition.outputSchema,
+      telemetry: this.telemetry,
+      cognitiveMemory: this.cognitiveMemory,
     });
 
     await runtime.initialize();

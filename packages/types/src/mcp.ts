@@ -19,6 +19,8 @@ export interface MCPServerConfig {
   exposedWorkflows?: string[];
   /** Agents to expose as tools */
   exposedAgents?: string[];
+  /** 支持的协议版本列表 (default: ['2025-03-26', '2024-11-05']) */
+  supportedProtocolVersions?: string[];
 }
 
 export interface MCPTool {

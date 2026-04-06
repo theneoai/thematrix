@@ -87,8 +87,8 @@ export class SSEManager {
         res.write(`id: ${event.eventId}\n`);
         res.write(`data: ${data}\n\n`);
         sent++;
-      } catch {
-        // Connection broken, collect for removal after iteration
+      } catch (err) {
+        this.logger.debug(`SSE write failed, removing connection: ${err instanceof Error ? err.message : String(err)}`);
         broken.push(res);
       }
     }

@@ -6,6 +6,7 @@ import type {
   PlanStep,
   LLMAdapter,
   DomainEvent,
+  ICognitiveMemoryManager,
 } from '@thematrix/types';
 import { EventTypes, type IEventBus } from '@thematrix/types';
 import { Logger, generateId } from '@thematrix/utils';
@@ -63,6 +64,7 @@ export class AgentPlanner {
   private model: string;
   private sourceId: string;
   private correlationId: string;
+  private cognitiveMemory?: ICognitiveMemoryManager;
 
   constructor(options: {
     llmAdapter: LLMAdapter;
@@ -70,12 +72,15 @@ export class AgentPlanner {
     model: string;
     sourceId: string;
     correlationId: string;
+    /** Cognitive memory for recalling/recording procedural patterns (optional) */
+    cognitiveMemory?: ICognitiveMemoryManager;
   }) {
     this.llmAdapter = options.llmAdapter;
     this.eventBus = options.eventBus;
     this.model = options.model;
     this.sourceId = options.sourceId;
     this.correlationId = options.correlationId;
+    this.cognitiveMemory = options.cognitiveMemory;
   }
 
   async createPlan(
@@ -85,11 +90,29 @@ export class AgentPlanner {
   ): Promise<AgentPlan> {
     logger.info(`Creating plan for goal: ${goal}`);
 
+    // Recall past successful procedural patterns for similar goals
+    let priorPatternsHint = '';
+    if (this.cognitiveMemory) {
+      try {
+        const priorPatterns = await this.cognitiveMemory.findProcedures(goal, 3);
+        if (priorPatterns.length > 0) {
+          const patternLines = priorPatterns.map(p =>
+            `  - "${p.name}" (success: ${(p.successRate * 100).toFixed(0)}%, used ${p.usageCount}x): ${p.toolSequence.map(s => s.toolOrAgent).join(' → ')}`,
+          );
+          priorPatternsHint = `\n\nPreviously successful patterns for similar goals:\n${patternLines.join('\n')}\nConsider reusing proven patterns when applicable.`;
+          logger.info(`Found ${priorPatterns.length} prior procedural patterns for goal`);
+        }
+      } catch (err) {
+        logger.warn(`Failed to recall procedures: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
     const userContent = [
       `Goal: ${goal}`,
       '',
       `Available tools: ${availableTools.length > 0 ? availableTools.join(', ') : 'none'}`,
       `Available agents for delegation: ${availableAgents.length > 0 ? availableAgents.join(', ') : 'none'}`,
+      priorPatternsHint,
     ].join('\n');
 
     const response = await this.llmAdapter.chat({
@@ -130,6 +153,19 @@ export class AgentPlanner {
 
     await this.publishEvent(EventTypes.AGENT_PLAN_CREATED, { plan });
     logger.info(`Plan created with ${steps.length} steps (planId=${plan.planId})`);
+
+    // Record plan as a procedural pattern for future recall
+    if (this.cognitiveMemory && steps.length > 0) {
+      this.cognitiveMemory.recordProcedure({
+        name: `plan-${plan.planId}`,
+        goalPattern: goal,
+        toolSequence: steps.map((s, i) => ({
+          order: i,
+          toolOrAgent: s.toolName ?? s.agentId ?? s.description.slice(0, 50),
+        })),
+        avgDurationMs: 0,
+      }).catch(err => logger.warn(`Failed to record procedure: ${err instanceof Error ? err.message : String(err)}`));
+    }
 
     return plan;
   }
