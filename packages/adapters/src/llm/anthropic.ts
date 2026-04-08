@@ -45,6 +45,16 @@ interface AnthropicStreamEvent {
   delta?: { type: string; text?: string };
 }
 
+/** Redact API keys from error messages */
+function redactApiKey(text: string, apiKey: string): string {
+  if (!apiKey || apiKey.length < 8) return text;
+  return text.replaceAll(apiKey, apiKey.slice(0, 4) + '...' + apiKey.slice(-4));
+}
+
+/** Timeout constants (ms) */
+const CHAT_TIMEOUT_MS = 60_000;
+const STREAM_TIMEOUT_MS = 120_000;
+
 export class AnthropicAdapter implements LLMAdapter {
   readonly provider = 'anthropic';
   private config: AnthropicConfig;
@@ -58,30 +68,45 @@ export class AnthropicAdapter implements LLMAdapter {
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
     const systemMessage = request.messages.find(m => m.role === 'system');
-    const response = await fetch(`${this.config.baseUrl ?? 'https://api.anthropic.com'}/v1/messages`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': this.config.apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: request.model || this.config.defaultModel,
-        system: systemMessage?.content,
-        messages: this.formatMessages(request.messages),
-        max_tokens: request.maxTokens ?? 4096,
-        temperature: request.temperature,
-        tools: request.tools ? this.formatTools(request.tools) : undefined,
-      }),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), CHAT_TIMEOUT_MS);
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.config.baseUrl ?? 'https://api.anthropic.com'}/v1/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': this.config.apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: request.model || this.config.defaultModel,
+          system: systemMessage?.content,
+          messages: this.formatMessages(request.messages),
+          max_tokens: request.maxTokens ?? 4096,
+          temperature: request.temperature,
+          tools: request.tools ? this.formatTools(request.tools) : undefined,
+        }),
+        signal: controller.signal,
+      });
+    } catch (err: unknown) {
+      throw new Error(`Anthropic API request failed: ${redactApiKey(String(err), this.config.apiKey)}`);
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (!response.ok) {
       const error = await response.text();
-      throw new Error(`Anthropic API error: ${response.status} - ${error}`);
+      throw new Error(`Anthropic API error: ${response.status} - ${redactApiKey(error, this.config.apiKey)}`);
     }
 
     const data = await response.json() as AnthropicResponse;
-    
+
+    if (!data.content || !Array.isArray(data.content)) {
+      throw new Error('Anthropic API returned an invalid response: missing content array');
+    }
+
     return {
       id: data.id,
       model: data.model,
@@ -106,26 +131,38 @@ export class AnthropicAdapter implements LLMAdapter {
 
   async *chatStream(request: ChatRequest): AsyncIterable<ChatStreamChunk> {
     const systemMessage = request.messages.find(m => m.role === 'system');
-    const response = await fetch(`${this.config.baseUrl ?? 'https://api.anthropic.com'}/v1/messages`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': this.config.apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: request.model || this.config.defaultModel,
-        system: systemMessage?.content,
-        messages: this.formatMessages(request.messages),
-        max_tokens: request.maxTokens ?? 4096,
-        temperature: request.temperature,
-        stream: true,
-      }),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), STREAM_TIMEOUT_MS);
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.config.baseUrl ?? 'https://api.anthropic.com'}/v1/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': this.config.apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: request.model || this.config.defaultModel,
+          system: systemMessage?.content,
+          messages: this.formatMessages(request.messages),
+          max_tokens: request.maxTokens ?? 4096,
+          temperature: request.temperature,
+          stream: true,
+        }),
+        signal: controller.signal,
+      });
+    } catch (err: unknown) {
+      clearTimeout(timeout);
+      throw new Error(`Anthropic API request failed: ${redactApiKey(String(err), this.config.apiKey)}`);
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (!response.ok) {
       const error = await response.text();
-      throw new Error(`Anthropic API error: ${response.status} - ${error}`);
+      throw new Error(`Anthropic API error: ${response.status} - ${redactApiKey(error, this.config.apiKey)}`);
     }
 
     const reader = response.body?.getReader();

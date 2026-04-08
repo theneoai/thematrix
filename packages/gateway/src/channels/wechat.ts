@@ -57,9 +57,11 @@ export class WeChatChannelAdapter implements ChannelAdapter {
     return createTriggerEvent('wechat', eventType, source, payload, body);
   }
 
-  verifySignature(req: IncomingRequest, secret: string): boolean {
+  verifySignature(req: IncomingRequest, token: string): boolean {
     // WeChat Work signature verification:
-    // Sort token, timestamp, nonce alphabetically, concatenate, and SHA1 hash
+    // Sort token, timestamp, nonce, encrypt alphabetically, concatenate, and SHA1 hash
+    // Note: the "secret" parameter is actually the Token configured in WeChat Work,
+    // not the EncodingAESKey.
     const timestamp = (req.query?.timestamp as string) ?? (req.headers['timestamp'] as string);
     const nonce = (req.query?.nonce as string) ?? (req.headers['nonce'] as string);
     const msgSignature = (req.query?.msg_signature as string) ?? (req.headers['msg_signature'] as string);
@@ -69,7 +71,11 @@ export class WeChatChannelAdapter implements ChannelAdapter {
       return false;
     }
 
-    const params = [secret, timestamp, nonce].sort();
+    // Extract encrypted content from body for msg_signature verification
+    const body = req.body as Record<string, unknown> | undefined;
+    const encrypt = (body?.Encrypt as string) ?? '';
+
+    const params = [token, timestamp, nonce, encrypt].sort();
     const computed = createHash('sha1').update(params.join('')).digest('hex');
 
     // Use timing-safe comparison

@@ -26,6 +26,8 @@ export type ProviderName =
   | 'azure-openai'
   | 'opencode'
   | 'kimicode'
+  | 'kimi'
+  | 'cohere'
   | (string & {}); // allow custom providers
 
 /** Provider 插件接口 (借鉴 OpenClaw prepareRuntimeAuth 模式) */

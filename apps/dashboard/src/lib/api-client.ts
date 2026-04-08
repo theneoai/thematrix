@@ -65,6 +65,8 @@ export const api = {
     get: (id: string) => fetchAPI<AgentDetail>(`/api/agents/${id}`),
     register: (definition: AgentDefinitionInput) =>
       postAPI<{ id: string }>('/api/agents', definition),
+    update: (id: string, update: Partial<AgentDefinitionInput>) =>
+      putAPI<void>(`/api/agents/${id}`, update),
     unregister: (id: string) => deleteAPI(`/api/agents/${id}`),
     pause: (id: string) => postAPI<void>(`/api/agents/${id}/pause`),
     resume: (id: string) => postAPI<void>(`/api/agents/${id}/resume`),
@@ -118,6 +120,7 @@ export const api = {
   // ── Alerts ─────────────────────────────────────────────────
   alerts: {
     active: () => fetchAPI<AlertInfo[]>('/api/alerts'),
+    history: () => fetchAPI<AlertInfo[]>('/api/alerts/history'),
     acknowledge: (id: string) => postAPI<void>(`/api/alerts/${id}/acknowledge`),
     resolve: (id: string) => postAPI<void>(`/api/alerts/${id}/resolve`),
     rules: () => fetchAPI<AlertRuleInfo[]>('/api/alerts/rules'),
@@ -153,6 +156,10 @@ export const api = {
   guardrails: {
     list: () => fetchAPI<GuardrailInfo[]>('/api/guardrails'),
     violations: () => fetchAPI<GuardrailViolation[]>('/api/guardrails/violations'),
+    create: (guardrail: GuardrailInput) => postAPI<{ id: string }>('/api/guardrails', guardrail),
+    update: (id: string, guardrail: Partial<GuardrailInput>) =>
+      putAPI<void>(`/api/guardrails/${id}`, guardrail),
+    delete: (id: string) => deleteAPI(`/api/guardrails/${id}`),
   },
 
   // ── Providers ──────────────────────────────────────────────
@@ -459,6 +466,14 @@ export interface GuardrailViolation {
   message: string;
   timestamp: string;
   action: string;
+}
+
+export interface GuardrailInput {
+  name: string;
+  type: 'input' | 'output' | 'both';
+  action: 'block' | 'warn' | 'rewrite';
+  pattern?: string;
+  description?: string;
 }
 
 // Providers

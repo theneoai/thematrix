@@ -47,40 +47,53 @@ class TrackedAdapter implements LLMAdapter {
       outputTokens: response.usage.completionTokens,
     };
 
-    try {
-      await this.pool.consume(this.ownerId, consumption);
-    } catch (error) {
-      logger.warn(`Token consumption tracking failed for ${this.ownerId}:`, error);
-    }
+    // Do not swallow budget-exceeded errors — they must propagate
+    await this.pool.consume(this.ownerId, consumption);
 
     return response;
   }
 
   async *chatStream(request: ChatRequest): AsyncIterable<ChatStreamChunk> {
-    let totalContent = '';
-    for await (const chunk of this.inner.chatStream(request)) {
-      if (chunk.content) totalContent += chunk.content;
-      yield chunk;
-    }
-
-    // Estimate token usage from accumulated content for budget tracking
+    // Pre-compute input tokens estimate once before streaming starts
     const estimatedInputTokens = Math.ceil(
       request.messages.reduce((sum, m) => sum + m.content.length, 0) / 4
     );
-    const estimatedOutputTokens = Math.ceil(totalContent.length / 4);
 
+    let totalOutputChars = 0;
+    let lastTrackedOutputTokens = 0;
+
+    for await (const chunk of this.inner.chatStream(request)) {
+      if (chunk.content) totalOutputChars += chunk.content.length;
+      yield chunk;
+
+      // Periodically track accumulated output tokens during streaming
+      // to avoid a single large non-atomic update at the end
+      const currentEstimatedOutputTokens = Math.ceil(totalOutputChars / 4);
+      const delta = currentEstimatedOutputTokens - lastTrackedOutputTokens;
+      if (delta >= 100) {
+        const consumption: TokenConsumption = {
+          provider: this.provider as ProviderName,
+          model: this.model,
+          inputTokens: 0, // input tokens tracked in final consumption
+          outputTokens: delta,
+        };
+        // Budget violations must propagate to stop the stream
+        await this.pool.consume(this.ownerId, consumption);
+        lastTrackedOutputTokens = currentEstimatedOutputTokens;
+      }
+    }
+
+    // Final consumption: remaining output tokens + input tokens
+    const finalOutputTokens = Math.ceil(totalOutputChars / 4) - lastTrackedOutputTokens;
     const consumption: TokenConsumption = {
       provider: this.provider as ProviderName,
       model: this.model,
       inputTokens: estimatedInputTokens,
-      outputTokens: estimatedOutputTokens,
+      outputTokens: finalOutputTokens,
     };
 
-    try {
-      await this.pool.consume(this.ownerId, consumption);
-    } catch (error) {
-      logger.warn(`Stream token tracking failed for ${this.ownerId}:`, error);
-    }
+    // Do not swallow budget-exceeded errors — they must propagate
+    await this.pool.consume(this.ownerId, consumption);
   }
 
   async countTokens(text: string): Promise<number> {

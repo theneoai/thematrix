@@ -39,6 +39,17 @@ export class WorkDistributor {
       throw new Error('Strategy could not select a node for the task');
     }
 
+    // Validate endpoint URL before attempting connection
+    let url: string;
+    try {
+      const parsed = new URL('/tasks', selectedNode.endpoint);
+      url = parsed.toString();
+    } catch {
+      throw new Error(
+        `Node ${selectedNode.nodeId} has invalid endpoint URL: "${selectedNode.endpoint}"`,
+      );
+    }
+
     this.logger.info(
       `Distributing task ${task.taskId} to node ${selectedNode.nodeId} (${selectedNode.hostname})`,
     );
@@ -48,7 +59,6 @@ export class WorkDistributor {
 
     try {
       // Submit task to the selected node via HTTP POST
-      const url = `${selectedNode.endpoint}/tasks`;
       const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

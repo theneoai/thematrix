@@ -135,8 +135,10 @@ export class K8sExecutionBackend implements ExecutionBackend {
       } else {
         record.status = 'failed';
         record.error = result.reason ?? 'Job failed';
+        // Capture pod logs before reporting failure
+        const logs = await this.getJobLogs(jobName, namespace);
         logger.error(`Task ${task.taskId} failed: ${record.error}`);
-        return { taskId: task.taskId, status: 'failed', error: record.error, metrics };
+        return { taskId: task.taskId, status: 'failed', error: record.error, output: logs, metrics };
       }
     } catch (error) {
       const completedAt = new Date();
@@ -145,11 +147,20 @@ export class K8sExecutionBackend implements ExecutionBackend {
       record.completedAt = completedAt;
       record.error = errorMessage;
 
+      // Best-effort capture of pod logs before reporting failure
+      let logs: string | undefined;
+      try {
+        logs = await this.getJobLogs(jobName, namespace);
+      } catch {
+        // Ignore log retrieval errors
+      }
+
       logger.error(`Task ${task.taskId} failed: ${errorMessage}`);
       return {
         taskId: task.taskId,
         status: 'failed',
         error: errorMessage,
+        output: logs,
         metrics: {
           startedAt,
           completedAt,
@@ -423,13 +434,52 @@ export class K8sExecutionBackend implements ExecutionBackend {
   private async loadFromKubeconfig(kubeconfigPath: string): Promise<void> {
     try {
       const content = await readFile(kubeconfigPath, 'utf-8');
-      // Minimal kubeconfig parsing: extract server and token from YAML
-      // In production, use a proper YAML parser
-      const serverMatch = content.match(/server:\s*(\S+)/);
-      const tokenMatch = content.match(/token:\s*(\S+)/);
 
-      this.apiServer = serverMatch?.[1] ?? 'https://127.0.0.1:6443';
-      this.authToken = tokenMatch?.[1] ?? '';
+      // Parse kubeconfig YAML by splitting into lines and extracting key-value pairs.
+      // We look for `server:` under `clusters:` and `token:` under `users:` sections
+      // to avoid matching those keys in unrelated sections (e.g. comments, context names).
+      const lines = content.split('\n');
+
+      let server: string | undefined;
+      let token: string | undefined;
+      let inClusters = false;
+      let inUsers = false;
+
+      for (const line of lines) {
+        const trimmed = line.trimStart();
+
+        // Track top-level sections (no leading whitespace or at section level)
+        if (/^clusters\s*:/.test(trimmed)) { inClusters = true; inUsers = false; continue; }
+        if (/^users\s*:/.test(trimmed)) { inUsers = true; inClusters = false; continue; }
+        if (/^(contexts|current-context|kind|apiVersion|preferences)\s*:/.test(trimmed)) {
+          inClusters = false; inUsers = false; continue;
+        }
+
+        // Extract server from clusters section
+        if (inClusters && !server) {
+          const serverMatch = trimmed.match(/^server:\s*["']?(https?:\/\/[^\s"'#]+)["']?\s*$/);
+          if (serverMatch) {
+            server = serverMatch[1];
+          }
+        }
+
+        // Extract token from users section
+        if (inUsers && !token) {
+          const tokenMatch = trimmed.match(/^token:\s*["']?([^\s"'#]+)["']?\s*$/);
+          if (tokenMatch) {
+            token = tokenMatch[1];
+          }
+        }
+      }
+
+      if (server && /^https?:\/\//.test(server)) {
+        this.apiServer = server;
+      } else {
+        logger.warn(`Invalid or missing server URL in kubeconfig, falling back to default`);
+        this.apiServer = 'https://127.0.0.1:6443';
+      }
+
+      this.authToken = token ?? '';
 
       logger.info(`Loaded kubeconfig from ${kubeconfigPath}, server=${this.apiServer}`);
     } catch (error) {

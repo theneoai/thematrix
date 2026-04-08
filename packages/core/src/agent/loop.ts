@@ -160,7 +160,14 @@ export class AgentLoop {
             this.runtime.getMemory(),
           );
         } catch (err) {
-          logger.warn(`Context management failed (non-fatal): ${(err as Error).message}`);
+          const errMsg = (err as Error).message ?? String(err);
+          // Surface context overflow errors as they indicate the context window is
+          // too large and summarization failed — continuing would likely cause LLM errors
+          if (errMsg.includes('context') || errMsg.includes('token') || errMsg.includes('overflow')) {
+            logger.error(`Context window overflow error (fatal): ${errMsg}`);
+            throw err;
+          }
+          logger.warn(`Context management failed (non-fatal): ${errMsg}`);
         }
       }
 
@@ -375,7 +382,12 @@ export class AgentLoop {
               this.runtime.getMemory(),
             );
           } catch (err) {
-            logger.warn(`Context management failed (non-fatal): ${(err as Error).message}`);
+            const errMsg = (err as Error).message ?? String(err);
+            if (errMsg.includes('context') || errMsg.includes('token') || errMsg.includes('overflow')) {
+              logger.error(`Context window overflow error (fatal): ${errMsg}`);
+              throw err;
+            }
+            logger.warn(`Context management failed (non-fatal): ${errMsg}`);
           }
         }
 

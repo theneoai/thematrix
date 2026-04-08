@@ -2,6 +2,8 @@
  * Agent 类型定义
  */
 
+import type { ProviderName } from './provider.js';
+
 export type AgentStatus = 
   | 'created' 
   | 'initializing' 
@@ -20,7 +22,7 @@ export interface AgentPersona {
 }
 
 export interface ModelConfig {
-  provider: string;
+  provider: ProviderName;
   model: string;
   apiKeyEnvVar?: string;
   baseUrl?: string;

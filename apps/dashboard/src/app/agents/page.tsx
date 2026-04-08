@@ -18,20 +18,26 @@ interface RegisterFormState {
   name: string;
   role: string;
   personality: string;
+  systemPrompt: string;
   provider: string;
   model: string;
   maxTokens: string;
   loopMode: string;
+  tools: string;
+  guardrails: string;
 }
 
 const initialForm: RegisterFormState = {
   name: '',
   role: '',
   personality: '',
+  systemPrompt: '',
   provider: 'openai',
   model: '',
   maxTokens: '',
   loopMode: 'single-turn',
+  tools: '',
+  guardrails: '',
 };
 
 // ─── Main Page ─────────────────────────────────────────────────────────────
@@ -108,13 +114,24 @@ export default function AgentsPage() {
   }
 
   function handleRegister() {
-    if (!form.name.trim() || !form.role.trim() || !form.model.trim()) return;
+    if (!form.name.trim() || !form.role.trim() || !form.model.trim()) {
+      notify('error', 'Missing required fields', 'Name, role, and model are required.');
+      return;
+    }
+
+    const tools = form.tools.trim()
+      ? form.tools.split(',').map((t) => t.trim()).filter(Boolean)
+      : undefined;
+    const guardrails = form.guardrails.trim()
+      ? form.guardrails.split(',').map((g) => g.trim()).filter(Boolean)
+      : undefined;
 
     registerMutation.mutate({
       name: form.name.trim(),
       persona: {
         role: form.role.trim(),
         personality: form.personality.trim(),
+        ...(form.systemPrompt.trim() ? { systemPrompt: form.systemPrompt.trim() } : {}),
       },
       model: {
         provider: form.provider,
@@ -122,6 +139,8 @@ export default function AgentsPage() {
         ...(form.maxTokens ? { maxTokens: Number(form.maxTokens) } : {}),
       },
       loopConfig: { mode: form.loopMode },
+      ...(tools ? { tools } : {}),
+      ...(guardrails ? { guardrails } : {}),
     });
   }
 
@@ -299,6 +318,17 @@ export default function AgentsPage() {
             />
           </FormField>
 
+          <FormField label="System Prompt" htmlFor="agent-systemprompt" hint="Custom system instructions for the agent.">
+            <textarea
+              id="agent-systemprompt"
+              className={inputClassName + ' min-h-[80px] font-mono text-xs'}
+              rows={3}
+              value={form.systemPrompt}
+              onChange={(e) => updateField('systemPrompt', e.target.value)}
+              placeholder="You are a helpful assistant that..."
+            />
+          </FormField>
+
           <div className="grid grid-cols-2 gap-4">
             <FormField label="Provider" htmlFor="agent-provider" required>
               <select
@@ -309,9 +339,17 @@ export default function AgentsPage() {
               >
                 <option value="openai">OpenAI</option>
                 <option value="anthropic">Anthropic</option>
-                <option value="google">Google</option>
-                <option value="cohere">Cohere</option>
-                <option value="local">Local</option>
+                <option value="deepseek">DeepSeek</option>
+                <option value="ollama">Ollama</option>
+                <option value="vllm">vLLM</option>
+                <option value="openrouter">OpenRouter</option>
+                <option value="moonshot">Moonshot</option>
+                <option value="minimax">MiniMax</option>
+                <option value="qwen">Qwen</option>
+                <option value="huggingface">HuggingFace</option>
+                <option value="azure">Azure OpenAI</option>
+                <option value="opencode">OpenCode</option>
+                <option value="kimi">Kimi</option>
               </select>
             </FormField>
 
@@ -351,6 +389,26 @@ export default function AgentsPage() {
               </select>
             </FormField>
           </div>
+
+          <FormField label="Tools" htmlFor="agent-tools" hint="Comma-separated list of tool names.">
+            <input
+              id="agent-tools"
+              className={inputClassName}
+              value={form.tools}
+              onChange={(e) => updateField('tools', e.target.value)}
+              placeholder="e.g. file-read, shell-exec, web-search"
+            />
+          </FormField>
+
+          <FormField label="Guardrails" htmlFor="agent-guardrails" hint="Comma-separated list of guardrail names.">
+            <input
+              id="agent-guardrails"
+              className={inputClassName}
+              value={form.guardrails}
+              onChange={(e) => updateField('guardrails', e.target.value)}
+              placeholder="e.g. pii-filter, content-safety"
+            />
+          </FormField>
         </div>
       </Modal>
 

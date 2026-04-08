@@ -2,6 +2,8 @@
  * LLM Adapter 类型定义
  */
 
+import type { ProviderName } from './provider.js';
+
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
@@ -76,7 +78,7 @@ export interface ChatStreamChunk {
 }
 
 export interface LLMAdapter {
-  readonly provider: string;
+  readonly provider: ProviderName;
   chat(request: ChatRequest): Promise<ChatResponse>;
   chatStream(request: ChatRequest): AsyncIterable<ChatStreamChunk>;
   countTokens(text: string): Promise<number>;

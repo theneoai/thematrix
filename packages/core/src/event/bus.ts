@@ -17,6 +17,8 @@ const logger = new Logger({ prefix: 'EventBus' });
 export class EventBus implements IEventBus {
   private emitter = new EventEmitter();
   private store: IEventStore;
+  private static readonly MAX_LISTENERS_PER_PATTERN = 50;
+  private listenerCounts = new Map<string, number>();
 
   constructor(store: IEventStore) {
     this.store = store;
@@ -24,13 +26,19 @@ export class EventBus implements IEventBus {
   }
 
   async publish(event: DomainEvent): Promise<void> {
-    // Persist first
-    await this.store.append(event);
-    
+    // Persist first — surface failures so callers know the event was not durably stored
+    try {
+      await this.store.append(event);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error(`Failed to persist event ${event.type} (${event.eventId}): ${message}`);
+      throw new Error(`Event store append failed for ${event.type}: ${message}`);
+    }
+
     // Then broadcast
     this.emitter.emit(event.type, event);
     this.emitter.emit('*', event);
-    
+
     logger.debug(`Published event: ${event.type} (${event.eventId})`);
   }
 
@@ -49,11 +57,24 @@ export class EventBus implements IEventBus {
       }
     };
 
+    // Guard against listener accumulation per pattern
+    const currentCount = this.listenerCounts.get(pattern) ?? 0;
+    if (currentCount >= EventBus.MAX_LISTENERS_PER_PATTERN) {
+      logger.warn(
+        `Max listeners (${EventBus.MAX_LISTENERS_PER_PATTERN}) reached for pattern "${pattern}". ` +
+        `Subscription rejected to prevent memory leak.`,
+      );
+      return () => {}; // noop unsubscribe
+    }
+    this.listenerCounts.set(pattern, currentCount + 1);
+
     this.emitter.on(pattern, wrappedHandler);
     logger.debug(`Subscribed to pattern: ${pattern}`);
 
     return () => {
       this.emitter.off(pattern, wrappedHandler);
+      const count = this.listenerCounts.get(pattern) ?? 1;
+      this.listenerCounts.set(pattern, count - 1);
       logger.debug(`Unsubscribed from pattern: ${pattern}`);
     };
   }

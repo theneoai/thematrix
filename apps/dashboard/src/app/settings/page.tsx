@@ -69,6 +69,11 @@ export default function SettingsPage() {
   const [deletingPolicyId, setDeletingPolicyId] = useState<string | null>(null);
   const [expandedEnv, setExpandedEnv] = useState<string | null>(null);
   const [expandedSuiteRunId, setExpandedSuiteRunId] = useState<string | null>(null);
+  const [expandedSuiteId, setExpandedSuiteId] = useState<string | null>(null);
+  const [guardrailModalOpen, setGuardrailModalOpen] = useState(false);
+  const [editingGuardrailId, setEditingGuardrailId] = useState<string | null>(null);
+  const [guardrailForm, setGuardrailForm] = useState({ name: '', type: 'both' as const, action: 'block' as const, pattern: '', description: '' });
+  const [deletingGuardrailId, setDeletingGuardrailId] = useState<string | null>(null);
 
   // ── Queries ─────────────────────────────────────────────────
   const environments = useQuery({ queryKey: ['environments'], queryFn: api.environments.list });
@@ -137,12 +142,44 @@ export default function SettingsPage() {
 
   const runEval = useMutation({
     mutationFn: (suiteId: string) => api.eval.run(suiteId),
-    onSuccess: (data) => {
+    onSuccess: (data, suiteId) => {
       queryClient.invalidateQueries({ queryKey: ['eval-suites'] });
       setExpandedSuiteRunId(data.runId);
+      setExpandedSuiteId(suiteId);
       notify('success', 'Evaluation started');
     },
     onError: () => notify('error', 'Failed to start evaluation'),
+  });
+
+  const createGuardrail = useMutation({
+    mutationFn: (form: typeof guardrailForm) => api.guardrails.create(form),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['guardrails'] });
+      notify('success', 'Guardrail created');
+      setGuardrailModalOpen(false);
+    },
+    onError: () => notify('error', 'Failed to create guardrail'),
+  });
+
+  const updateGuardrail = useMutation({
+    mutationFn: ({ id, form }: { id: string; form: typeof guardrailForm }) =>
+      api.guardrails.update(id, form),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['guardrails'] });
+      notify('success', 'Guardrail updated');
+      setGuardrailModalOpen(false);
+    },
+    onError: () => notify('error', 'Failed to update guardrail'),
+  });
+
+  const deleteGuardrail = useMutation({
+    mutationFn: (id: string) => api.guardrails.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['guardrails'] });
+      notify('success', 'Guardrail deleted');
+      setDeletingGuardrailId(null);
+    },
+    onError: () => notify('error', 'Failed to delete guardrail'),
   });
 
   // ── Helpers ─────────────────────────────────────────────────
@@ -366,6 +403,19 @@ export default function SettingsPage() {
       <Section
         title="Guardrail Overview"
         description="Configured guardrails and recent violations."
+        actions={
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={() => {
+              setGuardrailForm({ name: '', type: 'both', action: 'block', pattern: '', description: '' });
+              setEditingGuardrailId(null);
+              setGuardrailModalOpen(true);
+            }}
+          >
+            Add Guardrail
+          </Button>
+        }
       >
         {guardrails.isLoading && (
           <p className="text-sm text-foreground-muted">Loading guardrails...</p>
@@ -378,6 +428,14 @@ export default function SettingsPage() {
             icon="🛡️"
             title="No guardrails configured"
             description="Guardrails protect your agents from producing harmful or off-topic output."
+            action={{
+              label: 'Add Guardrail',
+              onClick: () => {
+                setGuardrailForm({ name: '', type: 'both', action: 'block', pattern: '', description: '' });
+                setEditingGuardrailId(null);
+                setGuardrailModalOpen(true);
+              },
+            }}
           />
         )}
         {guardrails.data && guardrails.data.length > 0 && (
@@ -388,7 +446,8 @@ export default function SettingsPage() {
                   <th className="pb-2 pr-4 font-medium">Name</th>
                   <th className="pb-2 pr-4 font-medium">Type</th>
                   <th className="pb-2 pr-4 font-medium">Source</th>
-                  <th className="pb-2 font-medium">Action</th>
+                  <th className="pb-2 pr-4 font-medium">Action</th>
+                  <th className="pb-2 font-medium text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -413,6 +472,30 @@ export default function SettingsPage() {
                               : 'running'
                         }
                       />
+                    </td>
+                    <td className="py-2.5 text-right">
+                      {!g.builtin && (
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              setEditingGuardrailId(g.id);
+                              setGuardrailForm({ name: g.name, type: g.type, action: g.action, pattern: '', description: '' });
+                              setGuardrailModalOpen(true);
+                            }}
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setDeletingGuardrailId(g.id)}
+                          >
+                            Delete
+                          </Button>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -464,15 +547,34 @@ export default function SettingsPage() {
         title="MCP Servers"
         description="Model Context Protocol integration status."
       >
-        <div className="rounded-md border border-border bg-background-tertiary px-4 py-3">
-          <p className="text-sm text-foreground-muted">
-            MCP servers provide tool integration for agents via the Model Context Protocol.
-            Servers are configured in your <code className="rounded bg-background-secondary px-1.5 py-0.5 font-mono text-xs">matrix.config.yaml</code> and
-            automatically discovered at startup. Connected servers expose tools, resources, and
-            prompts that agents can use during execution.
-          </p>
-          <p className="mt-2 text-xs text-foreground-subtle">
-            Manage MCP server configuration through your project configuration file.
+        <div className="space-y-3">
+          <div className="rounded-md border border-border bg-background-tertiary px-4 py-3">
+            <p className="text-sm text-foreground-muted">
+              MCP servers provide tool integration for agents via the Model Context Protocol.
+              Servers are configured in your <code className="rounded bg-background-secondary px-1.5 py-0.5 font-mono text-xs">matrix.config.yaml</code> and
+              automatically discovered at startup.
+            </p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-md border border-border bg-background-tertiary px-4 py-3">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="h-2 w-2 rounded-full bg-success" />
+                <span className="text-sm font-medium text-foreground">stdio</span>
+              </div>
+              <p className="text-xs text-foreground-muted">Local process via stdin/stdout</p>
+              <p className="text-xs text-foreground-subtle mt-1">Supports: tools, resources, prompts</p>
+            </div>
+            <div className="rounded-md border border-border bg-background-tertiary px-4 py-3">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="h-2 w-2 rounded-full bg-success" />
+                <span className="text-sm font-medium text-foreground">HTTP/SSE</span>
+              </div>
+              <p className="text-xs text-foreground-muted">Remote server via HTTP transport</p>
+              <p className="text-xs text-foreground-subtle mt-1">Supports: tools, resources, prompts</p>
+            </div>
+          </div>
+          <p className="text-xs text-foreground-subtle">
+            A2A (Agent-to-Agent) protocol is also available for inter-agent communication.
           </p>
         </div>
       </Section>
@@ -536,13 +638,13 @@ export default function SettingsPage() {
                 </div>
 
                 {/* Expanded results */}
-                {expandedSuiteRunId && (
+                {expandedSuiteRunId && expandedSuiteId === suite.id && (
                   <EvalResultsPanel
                     runId={expandedSuiteRunId}
                     suiteId={suite.id}
                     results={evalResults.data}
                     isLoading={evalResults.isLoading}
-                    onClose={() => setExpandedSuiteRunId(null)}
+                    onClose={() => { setExpandedSuiteRunId(null); setExpandedSuiteId(null); }}
                   />
                 )}
               </div>
@@ -647,6 +749,102 @@ export default function SettingsPage() {
         confirmLabel="Delete"
         variant="danger"
         loading={deletePolicy.isPending}
+      />
+
+      {/* ────────────────── Guardrail Modal ──────────────────────── */}
+      <Modal
+        open={guardrailModalOpen}
+        onClose={() => setGuardrailModalOpen(false)}
+        title={editingGuardrailId ? 'Edit Guardrail' : 'Add Guardrail'}
+        description="Configure a guardrail to protect agent inputs or outputs."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setGuardrailModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                if (editingGuardrailId) {
+                  updateGuardrail.mutate({ id: editingGuardrailId, form: guardrailForm });
+                } else {
+                  createGuardrail.mutate(guardrailForm);
+                }
+              }}
+              loading={createGuardrail.isPending || updateGuardrail.isPending}
+              disabled={!guardrailForm.name.trim()}
+            >
+              {editingGuardrailId ? 'Save Changes' : 'Create Guardrail'}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <FormField label="Name" htmlFor="guardrail-name" required>
+            <input
+              id="guardrail-name"
+              className={inputClassName}
+              value={guardrailForm.name}
+              onChange={(e) => setGuardrailForm((f) => ({ ...f, name: e.target.value }))}
+              placeholder="e.g. pii-filter"
+            />
+          </FormField>
+          <FormField label="Type" htmlFor="guardrail-type" required>
+            <select
+              id="guardrail-type"
+              className={selectClassName}
+              value={guardrailForm.type}
+              onChange={(e) => setGuardrailForm((f) => ({ ...f, type: e.target.value as 'input' | 'output' | 'both' }))}
+            >
+              <option value="input">Input</option>
+              <option value="output">Output</option>
+              <option value="both">Both</option>
+            </select>
+          </FormField>
+          <FormField label="Action" htmlFor="guardrail-action" required>
+            <select
+              id="guardrail-action"
+              className={selectClassName}
+              value={guardrailForm.action}
+              onChange={(e) => setGuardrailForm((f) => ({ ...f, action: e.target.value as 'block' | 'warn' | 'rewrite' }))}
+            >
+              <option value="block">Block</option>
+              <option value="warn">Warn</option>
+              <option value="rewrite">Rewrite</option>
+            </select>
+          </FormField>
+          <FormField label="Pattern" htmlFor="guardrail-pattern" hint="Regex pattern to match against.">
+            <input
+              id="guardrail-pattern"
+              className={inputClassName + ' font-mono text-xs'}
+              value={guardrailForm.pattern}
+              onChange={(e) => setGuardrailForm((f) => ({ ...f, pattern: e.target.value }))}
+              placeholder="e.g. \\b\\d{3}-\\d{2}-\\d{4}\\b"
+            />
+          </FormField>
+          <FormField label="Description" htmlFor="guardrail-desc" hint="What this guardrail protects against.">
+            <textarea
+              id="guardrail-desc"
+              className={inputClassName}
+              rows={2}
+              value={guardrailForm.description}
+              onChange={(e) => setGuardrailForm((f) => ({ ...f, description: e.target.value }))}
+              placeholder="Blocks output containing PII such as SSN"
+            />
+          </FormField>
+        </div>
+      </Modal>
+
+      {/* ────────────────── Delete Guardrail Confirm ──────────────── */}
+      <ConfirmDialog
+        open={!!deletingGuardrailId}
+        onClose={() => setDeletingGuardrailId(null)}
+        onConfirm={() => deletingGuardrailId && deleteGuardrail.mutate(deletingGuardrailId)}
+        title="Delete Guardrail"
+        message="Are you sure you want to delete this guardrail? This action cannot be undone."
+        confirmLabel="Delete"
+        variant="danger"
+        loading={deleteGuardrail.isPending}
       />
     </div>
   );

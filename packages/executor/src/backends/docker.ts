@@ -117,6 +117,20 @@ export class DockerExecutionBackend implements ExecutionBackend {
       record.completedAt = completedAt;
       record.error = errorMessage;
 
+      // Ensure container is stopped and removed on failure/timeout
+      if (record.containerId) {
+        try {
+          await this.dockerFetch(`/containers/${record.containerId}/stop`, { method: 'POST' });
+        } catch {
+          // Container may already be stopped
+        }
+        try {
+          await this.dockerFetch(`/containers/${record.containerId}`, { method: 'DELETE' });
+        } catch {
+          // Best-effort removal
+        }
+      }
+
       logger.error(`Task ${task.taskId} failed: ${errorMessage}`);
       return {
         taskId: task.taskId,
@@ -142,11 +156,16 @@ export class DockerExecutionBackend implements ExecutionBackend {
 
     try {
       await this.dockerFetch(`/containers/${record.containerId}/stop`, { method: 'POST' });
-      record.status = 'cancelled';
-      record.completedAt = new Date();
-    } catch (error) {
-      logger.error(`Failed to stop container: ${error instanceof Error ? error.message : String(error)}`);
+    } catch {
+      // Container may already be stopped
     }
+    try {
+      await this.dockerFetch(`/containers/${record.containerId}`, { method: 'DELETE' });
+    } catch {
+      // Best-effort removal
+    }
+    record.status = 'cancelled';
+    record.completedAt = new Date();
   }
 
   async getStatus(taskId: string): Promise<ExecutionStatus> {
@@ -234,7 +253,14 @@ export class DockerExecutionBackend implements ExecutionBackend {
 
     if (task.environment) {
       for (const [key, value] of Object.entries(task.environment)) {
-        env.push(`${key}=${value}`);
+        // Validate env var key: must be alphanumeric/underscore, cannot start with a digit
+        if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) {
+          logger.warn(`Skipping invalid environment variable key: ${key}`);
+          continue;
+        }
+        // Sanitize value: strip null bytes and control characters except common whitespace
+        const sanitized = String(value).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+        env.push(`${key}=${sanitized}`);
       }
     }
 

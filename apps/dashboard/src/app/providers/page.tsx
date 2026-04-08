@@ -35,7 +35,7 @@ export default function ProvidersPage() {
   });
 
   // ── Queries ────────────────────────────────────────────────────────────────
-  const { data: providers } = useQuery({
+  const { data: providers, isLoading: providersLoading, error: providersError } = useQuery({
     queryKey: ['providers'],
     queryFn: api.providers.list,
   });
@@ -46,7 +46,7 @@ export default function ProvidersPage() {
     refetchInterval: 30_000,
   });
 
-  const { data: tokenUsage, error: tokenError } = useQuery({
+  const { data: tokenUsage, isLoading: tokenLoading, error: tokenError } = useQuery({
     queryKey: ['token-usage'],
     queryFn: api.tokens.usage,
   });
@@ -148,7 +148,10 @@ export default function ProvidersPage() {
 
   function handleBudgetSubmit() {
     const ownerId = editingBudgetOwner ?? budgetForm.ownerId;
-    if (!ownerId || !budgetForm.maxTokens) return;
+    if (!ownerId || !budgetForm.maxTokens) {
+      notify('error', 'Missing required fields', 'Owner ID and max tokens are required.');
+      return;
+    }
     const budget: Parameters<typeof api.tokens.allocateBudget>[1] = {
       maxTokens: Number(budgetForm.maxTokens),
       period: budgetForm.period,
@@ -162,6 +165,18 @@ export default function ProvidersPage() {
   return (
     <div className="space-y-8">
       <h1 className="text-2xl font-semibold text-foreground">Model Providers & Token Pool</h1>
+
+      {(providersLoading || tokenLoading) && (
+        <div className="rounded-lg border border-border bg-background-secondary p-8 text-center text-foreground-subtle">
+          Loading providers and token data...
+        </div>
+      )}
+
+      {providersError && (
+        <div className="rounded-lg border border-border bg-background-secondary p-8 text-center text-error">
+          Failed to load providers: {providersError.message}
+        </div>
+      )}
 
       {tokenError && (
         <div className="rounded-lg border border-border bg-background-secondary p-8 text-center text-error">
@@ -219,6 +234,20 @@ export default function ProvidersPage() {
                     {provider.models.length} model{provider.models.length !== 1 ? 's' : ''} available
                   </div>
 
+                  {provider.models.length > 0 && (
+                    <div className="max-h-24 overflow-y-auto space-y-0.5">
+                      {provider.models.map((m) => (
+                        <div
+                          key={m.id}
+                          className="flex items-center justify-between text-[10px] text-foreground-muted px-1.5 py-0.5 rounded bg-background-tertiary"
+                        >
+                          <span className="font-mono truncate" title={m.id}>{m.name}</span>
+                          <span className="shrink-0 ml-2 text-foreground-subtle">{(m.contextWindow / 1000).toFixed(0)}K</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   <Button
                     size="sm"
                     variant="secondary"
@@ -270,7 +299,7 @@ export default function ProvidersPage() {
         </div>
 
         {budgets.length > 0 ? (
-          <div className="rounded-lg border border-border">
+          <div className="overflow-x-auto rounded-lg border border-border">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border bg-background-secondary text-left text-foreground-subtle">
@@ -333,7 +362,7 @@ export default function ProvidersPage() {
       {/* ── Usage by Owner ────────────────────────────────────────────────── */}
       <section>
         <h2 className="text-lg font-medium text-foreground mb-4">Token Usage by Owner</h2>
-        <div className="rounded-lg border border-border">
+        <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-background-secondary text-left text-foreground-subtle">

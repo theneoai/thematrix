@@ -55,6 +55,8 @@ export interface MCPClientConfig {
   transport: MCPTransportConfig;
   /** Auto-approve tool calls from this server */
   autoApprove?: boolean;
+  /** Maximum number of concurrent tool calls (default 10) */
+  maxConcurrentCalls?: number;
 }
 
 export type MCPTransportConfig =

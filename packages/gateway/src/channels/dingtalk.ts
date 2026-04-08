@@ -106,6 +106,14 @@ export class DingTalkChannelAdapter implements ChannelAdapter {
       return false;
     }
 
+    // Replay protection: reject requests older than 1 hour (DingTalk recommendation)
+    const timestampNum = Number(timestamp);
+    const now = Date.now();
+    if (Number.isNaN(timestampNum) || Math.abs(now - timestampNum) > 3600000) {
+      this.logger.warn('Request timestamp is stale or invalid (replay protection)');
+      return false;
+    }
+
     // DingTalk signature: Base64(HmacSHA256(timestamp + "\n" + secret, secret))
     const stringToSign = `${timestamp}\n${secret}`;
     const expected = createHmac('sha256', secret)

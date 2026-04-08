@@ -84,11 +84,32 @@ export class SecretManager {
 
   private async resolveFile(filePath: string): Promise<string> {
     const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+
+    // Sanitize: resolve to absolute path and block directory traversal
+    const resolved = path.resolve(filePath);
+    if (resolved !== path.normalize(filePath) && !path.isAbsolute(filePath)) {
+      throw new Error(`Insecure secret file path (traversal detected): ${filePath}`);
+    }
+    // Block paths containing traversal sequences even if they resolve cleanly
+    if (filePath.includes('..')) {
+      throw new Error(`Insecure secret file path (directory traversal not allowed): ${filePath}`);
+    }
+
     try {
-      const content = await fs.readFile(filePath, 'utf-8');
+      // Verify it is a regular file, not a symlink to somewhere unexpected
+      const stat = await fs.lstat(resolved);
+      if (!stat.isFile()) {
+        throw new Error(`Secret path is not a regular file: ${resolved}`);
+      }
+      const content = await fs.readFile(resolved, 'utf-8');
       return content.trim();
     } catch (error) {
-      throw new Error(`Failed to read secret file: ${filePath} — ${error}`);
+      if (error instanceof Error && error.message.startsWith('Secret path is not') ||
+          error instanceof Error && error.message.startsWith('Insecure secret file')) {
+        throw error;
+      }
+      throw new Error(`Failed to read secret file: ${resolved} — ${error}`);
     }
   }
 

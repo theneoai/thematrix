@@ -35,6 +35,15 @@ export class CronScheduler {
       this.removeJob(schedule.id);
     }
 
+    // Pre-validate timezone before scheduling to fail fast
+    if (schedule.timezone) {
+      try {
+        Intl.DateTimeFormat('en-US', { timeZone: schedule.timezone });
+      } catch {
+        throw new Error(`Invalid timezone "${schedule.timezone}" in cron schedule "${schedule.name}"`);
+      }
+    }
+
     const parsed = this.parseCron(schedule.cron);
     const job: CronJob = { schedule, parsed, timer: null };
     this.jobs.set(schedule.id, job);
@@ -122,6 +131,11 @@ export class CronScheduler {
    * Supports: *, specific values, ranges (1-5), steps (* /5), lists (1,3,5)
    */
   parseCron(expression: string): ParsedCron {
+    // Limit input length to prevent DoS via extremely long expressions
+    if (expression.length > 200) {
+      throw new Error(`Cron expression too long (${expression.length} chars, max 200)`);
+    }
+
     const parts = expression.trim().split(/\s+/);
     if (parts.length !== 5) {
       throw new Error(`Invalid cron expression: "${expression}" - expected 5 fields`);
@@ -157,6 +171,9 @@ export class CronScheduler {
           } else {
             start = parseInt(range, 10);
           }
+        }
+        if (isNaN(start) || isNaN(end) || start < min || end > max || start > end) {
+          throw new Error(`Invalid range "${part}" in cron field (valid: ${min}-${max})`);
         }
         for (let i = start; i <= end; i += step) {
           values.add(i);

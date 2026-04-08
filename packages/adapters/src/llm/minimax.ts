@@ -84,6 +84,16 @@ interface MiniMaxStreamChunk {
   }>;
 }
 
+/** Redact API keys from error messages */
+function redactApiKey(text: string, apiKey: string): string {
+  if (!apiKey || apiKey.length < 8) return text;
+  return text.replaceAll(apiKey, apiKey.slice(0, 4) + '...' + apiKey.slice(-4));
+}
+
+/** Timeout constants (ms) */
+const CHAT_TIMEOUT_MS = 60_000;
+const STREAM_TIMEOUT_MS = 120_000;
+
 export class MiniMaxAdapter implements LLMAdapter {
   readonly provider = 'minimax';
   private readonly baseUrl: string;
@@ -110,24 +120,40 @@ export class MiniMaxAdapter implements LLMAdapter {
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: this.headers,
-      body: JSON.stringify({
-        model: request.model || this.defaultModel,
-        messages: this.formatMessages(request.messages),
-        max_tokens: request.maxTokens,
-        temperature: request.temperature,
-        tools: request.tools ? this.formatTools(request.tools) : undefined,
-      }),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), CHAT_TIMEOUT_MS);
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: this.headers,
+        body: JSON.stringify({
+          model: request.model || this.defaultModel,
+          messages: this.formatMessages(request.messages),
+          max_tokens: request.maxTokens,
+          temperature: request.temperature,
+          tools: request.tools ? this.formatTools(request.tools) : undefined,
+        }),
+        signal: controller.signal,
+      });
+    } catch (err: unknown) {
+      throw new Error(`MiniMax API request failed: ${redactApiKey(String(err), this.apiKey)}`);
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (!response.ok) {
       const error = await response.text();
-      throw new Error(`MiniMax API error: ${response.status} - ${error}`);
+      throw new Error(`MiniMax API error: ${response.status} - ${redactApiKey(error, this.apiKey)}`);
     }
 
     const data = await response.json() as MiniMaxResponse;
+
+    if (!data.choices?.length || !data.choices[0].message) {
+      throw new Error('MiniMax API returned an invalid response: missing choices or message');
+    }
+
     const choice = data.choices[0];
 
     return {
@@ -148,21 +174,33 @@ export class MiniMaxAdapter implements LLMAdapter {
   }
 
   async *chatStream(request: ChatRequest): AsyncIterable<ChatStreamChunk> {
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: this.headers,
-      body: JSON.stringify({
-        model: request.model || this.defaultModel,
-        messages: this.formatMessages(request.messages),
-        max_tokens: request.maxTokens,
-        temperature: request.temperature,
-        stream: true,
-      }),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), STREAM_TIMEOUT_MS);
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: this.headers,
+        body: JSON.stringify({
+          model: request.model || this.defaultModel,
+          messages: this.formatMessages(request.messages),
+          max_tokens: request.maxTokens,
+          temperature: request.temperature,
+          stream: true,
+        }),
+        signal: controller.signal,
+      });
+    } catch (err: unknown) {
+      clearTimeout(timeout);
+      throw new Error(`MiniMax API request failed: ${redactApiKey(String(err), this.apiKey)}`);
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (!response.ok) {
       const error = await response.text();
-      throw new Error(`MiniMax API error: ${response.status} - ${error}`);
+      throw new Error(`MiniMax API error: ${response.status} - ${redactApiKey(error, this.apiKey)}`);
     }
 
     const reader = response.body?.getReader();
@@ -211,7 +249,29 @@ export class MiniMaxAdapter implements LLMAdapter {
 
   private formatMessages(messages: ChatMessage[]): unknown[] {
     // MiniMax OpenAI-compat 端点直接支持 system/user/assistant/tool 角色
-    return messages.map(m => ({ role: m.role, content: m.content }));
+    const result: unknown[] = [];
+    for (const m of messages) {
+      if (m.role === 'tool') {
+        // OpenAI-compat requires one message per tool result, each with tool_call_id
+        if (m.toolResults && m.toolResults.length > 0) {
+          for (const r of m.toolResults) {
+            result.push({ role: 'tool', tool_call_id: r.toolCallId, content: r.content });
+          }
+        } else {
+          result.push({ role: 'tool', content: m.content });
+        }
+      } else if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
+        // Assistant message that triggered tool calls
+        result.push({
+          role: 'assistant',
+          content: m.content || null,
+          tool_calls: m.toolCalls,
+        });
+      } else {
+        result.push({ role: m.role, content: m.content });
+      }
+    }
+    return result;
   }
 
   private formatTools(tools: ToolDefinition[]): unknown[] {

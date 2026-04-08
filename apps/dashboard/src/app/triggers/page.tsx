@@ -34,13 +34,15 @@ export default function TriggersPage() {
   const queryClient = useQueryClient();
   const notify = useNotificationStore((s) => s.addNotification);
 
-  const { data: triggers, error: triggersError } = useQuery({ queryKey: ['triggers'], queryFn: api.triggers.list });
-  const { data: schedules, error: schedulesError } = useQuery({ queryKey: ['schedules'], queryFn: api.schedules.list });
+  const { data: triggers, isLoading: triggersLoading, error: triggersError } = useQuery({ queryKey: ['triggers'], queryFn: api.triggers.list });
+  const { data: schedules, isLoading: schedulesLoading, error: schedulesError } = useQuery({ queryKey: ['schedules'], queryFn: api.schedules.list });
 
   // ── Trigger modal state ───────────────────────────────────────
   const [triggerModalOpen, setTriggerModalOpen] = useState(false);
   const [editingTrigger, setEditingTrigger] = useState<TriggerRuleInfo | null>(null);
   const [triggerForm, setTriggerForm] = useState<TriggerRuleInput>(emptyTriggerForm);
+  const [triggerConditionsJson, setTriggerConditionsJson] = useState('');
+  const [triggerMappingJson, setTriggerMappingJson] = useState('');
   const [deletingTriggerId, setDeletingTriggerId] = useState<string | null>(null);
 
   // ── Schedule modal state ──────────────────────────────────────
@@ -136,6 +138,8 @@ export default function TriggersPage() {
   function openAddTrigger() {
     setEditingTrigger(null);
     setTriggerForm(emptyTriggerForm);
+    setTriggerConditionsJson('');
+    setTriggerMappingJson('');
     setTriggerModalOpen(true);
   }
 
@@ -158,10 +162,32 @@ export default function TriggersPage() {
   }
 
   function handleTriggerSubmit() {
+    let conditions: TriggerRuleInput['conditions'];
+    let inputMapping: TriggerRuleInput['inputMapping'];
+
+    if (triggerConditionsJson.trim()) {
+      try {
+        conditions = JSON.parse(triggerConditionsJson);
+      } catch {
+        notify('error', 'Invalid JSON in conditions field');
+        return;
+      }
+    }
+    if (triggerMappingJson.trim()) {
+      try {
+        inputMapping = JSON.parse(triggerMappingJson);
+      } catch {
+        notify('error', 'Invalid JSON in input mapping field');
+        return;
+      }
+    }
+
+    const payload: TriggerRuleInput = { ...triggerForm, conditions, inputMapping };
+
     if (editingTrigger) {
-      updateTrigger.mutate({ id: editingTrigger.id, rule: triggerForm });
+      updateTrigger.mutate({ id: editingTrigger.id, rule: payload });
     } else {
-      createTrigger.mutate(triggerForm);
+      createTrigger.mutate(payload);
     }
   }
 
@@ -224,7 +250,7 @@ export default function TriggersPage() {
             Add Trigger Rule
           </Button>
         </div>
-        <div className="rounded-lg border border-border">
+        <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-background-secondary text-left text-foreground-subtle">
@@ -237,7 +263,13 @@ export default function TriggersPage() {
               </tr>
             </thead>
             <tbody>
-              {triggersError ? (
+              {triggersLoading ? (
+                <tr>
+                  <td colSpan={6} className="px-4 py-8 text-center text-foreground-subtle">
+                    Loading triggers...
+                  </td>
+                </tr>
+              ) : triggersError ? (
                 <tr>
                   <td colSpan={6} className="px-4 py-8 text-center text-error">
                     Failed to load triggers: {triggersError.message}
@@ -307,7 +339,7 @@ export default function TriggersPage() {
             Add Schedule
           </Button>
         </div>
-        <div className="rounded-lg border border-border">
+        <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-background-secondary text-left text-foreground-subtle">
@@ -320,7 +352,13 @@ export default function TriggersPage() {
               </tr>
             </thead>
             <tbody>
-              {schedulesError ? (
+              {schedulesLoading ? (
+                <tr>
+                  <td colSpan={6} className="px-4 py-8 text-center text-foreground-subtle">
+                    Loading schedules...
+                  </td>
+                </tr>
+              ) : schedulesError ? (
                 <tr>
                   <td colSpan={6} className="px-4 py-8 text-center text-error">
                     Failed to load schedules: {schedulesError.message}
@@ -472,6 +510,34 @@ export default function TriggersPage() {
               />
             </FormField>
           </div>
+
+          <FormField
+            label="Conditions (JSON)"
+            htmlFor="trigger-conditions"
+            hint='Optional JSON array of conditions: [{"field":"$.type","operator":"eq","value":"merge"}]'
+          >
+            <textarea
+              id="trigger-conditions"
+              className={inputClassName + ' min-h-[60px] font-mono text-xs'}
+              value={triggerConditionsJson}
+              onChange={(e) => setTriggerConditionsJson(e.target.value)}
+              placeholder='[{"field": "$.type", "operator": "eq", "value": "merge"}]'
+            />
+          </FormField>
+
+          <FormField
+            label="Input Mapping (JSON)"
+            htmlFor="trigger-mapping"
+            hint='Map webhook fields to workflow inputs: {"repo":"$.repository.name"}'
+          >
+            <textarea
+              id="trigger-mapping"
+              className={inputClassName + ' min-h-[60px] font-mono text-xs'}
+              value={triggerMappingJson}
+              onChange={(e) => setTriggerMappingJson(e.target.value)}
+              placeholder='{"repo": "$.repository.name", "branch": "$.ref"}'
+            />
+          </FormField>
         </div>
       </Modal>
 

@@ -33,11 +33,18 @@ export class GatewayServer {
   private readonly adapters: Map<string, ChannelAdapter> = new Map();
   private readonly channelConfigs: Map<string, ChannelConfig> = new Map();
   private readonly onTrigger: TriggerCallback;
+  private readonly maxBodySize: number;
+
+  // Basic rate limiting: track request counts per IP within a sliding window
+  private readonly rateLimitWindow = 60_000; // 1 minute
+  private readonly rateLimitMax = 120; // max requests per window per IP
+  private readonly rateLimitMap: Map<string, { count: number; resetAt: number }> = new Map();
 
   constructor(config: GatewayConfig, onTrigger: TriggerCallback) {
     this.logger = new Logger({ prefix: 'gateway' });
     this.basePath = config.basePath ?? '/hooks';
     this.onTrigger = onTrigger;
+    this.maxBodySize = (config as Record<string, unknown>).maxBodySize as number ?? 1024 * 1024; // 1 MB default
 
     // Register channel adapters from config
     for (const channelConfig of config.channels) {
@@ -127,8 +134,43 @@ export class GatewayServer {
     }
   }
 
+  /**
+   * Safely extract a single string value from a header that may be string | string[].
+   */
+  private getHeader(req: IncomingMessage, name: string): string | undefined {
+    const value = req.headers[name.toLowerCase()];
+    if (Array.isArray(value)) {
+      return value[0];
+    }
+    return value;
+  }
+
+  /**
+   * Basic per-IP rate limiting. Returns true if the request should be rejected.
+   */
+  private isRateLimited(ip: string): boolean {
+    const now = Date.now();
+    const entry = this.rateLimitMap.get(ip);
+    if (!entry || now >= entry.resetAt) {
+      this.rateLimitMap.set(ip, { count: 1, resetAt: now + this.rateLimitWindow });
+      return false;
+    }
+    entry.count += 1;
+    return entry.count > this.rateLimitMax;
+  }
+
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    // Rate limiting
+    const clientIp = this.getHeader(req, 'x-forwarded-for')?.split(',')[0]?.trim()
+      ?? req.socket.remoteAddress ?? 'unknown';
+    if (this.isRateLimited(clientIp)) {
+      res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
+      res.end(JSON.stringify({ error: 'Too many requests' }));
+      return;
+    }
+
+    const host = this.getHeader(req, 'host') ?? 'localhost';
+    const url = new URL(req.url ?? '/', `http://${host}`);
     const path = url.pathname;
 
     // Health check endpoint
@@ -163,7 +205,7 @@ export class GatewayServer {
     }
 
     // Read and parse body
-    const rawBody = await this.readBody(req);
+    const rawBody = await this.readBody(req, this.maxBodySize);
     let body: unknown;
     try {
       body = JSON.parse(rawBody.toString('utf-8'));

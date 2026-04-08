@@ -139,11 +139,13 @@ export class SSHExecutionBackend implements ExecutionBackend {
         record.status = 'completed';
         record.output = stdout;
         logger.info(`Task ${task.taskId} completed on remote host`);
+        await this.cleanupRemoteDir(remoteDir);
         return { taskId: task.taskId, status: 'completed', output: stdout, metrics };
       } else {
         record.status = 'failed';
         record.error = `Remote process exited with code ${exitCode}`;
         logger.error(`Task ${task.taskId} failed: ${record.error}`);
+        await this.cleanupRemoteDir(remoteDir);
         return { taskId: task.taskId, status: 'failed', error: record.error, output: stdout, metrics };
       }
     } catch (error) {
@@ -152,6 +154,17 @@ export class SSHExecutionBackend implements ExecutionBackend {
       record.status = 'failed';
       record.completedAt = completedAt;
       record.error = errorMessage;
+
+      // Best-effort cleanup of remote directory
+      try {
+        const safeTaskId = task.taskId.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const remoteDir = this.config?.workDir
+          ? `${this.config.workDir}/${safeTaskId}`
+          : `/tmp/thematrix/${safeTaskId}`;
+        await this.cleanupRemoteDir(remoteDir);
+      } catch {
+        // Ignore cleanup errors in error path
+      }
 
       logger.error(`Task ${task.taskId} failed: ${errorMessage}`);
       return {
@@ -186,6 +199,18 @@ export class SSHExecutionBackend implements ExecutionBackend {
 
     record.status = 'cancelled';
     record.completedAt = new Date();
+
+    // Best-effort cleanup of remote working directory
+    try {
+      const safeTaskId = taskId.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const remoteDir = this.config?.workDir
+        ? `${this.config.workDir}/${safeTaskId}`
+        : `/tmp/thematrix/${safeTaskId}`;
+      await this.cleanupRemoteDir(remoteDir);
+    } catch {
+      // Ignore cleanup errors during cancellation
+    }
+
     logger.info(`Task ${taskId} cancelled`);
   }
 
@@ -270,6 +295,16 @@ export class SSHExecutionBackend implements ExecutionBackend {
     }
     this.tasks.clear();
     logger.info('SSH backend disposed');
+  }
+
+  /** Best-effort cleanup of a remote working directory */
+  private async cleanupRemoteDir(remoteDir: string): Promise<void> {
+    try {
+      await this.sshExec(`rm -rf -- "${remoteDir}"`);
+      logger.info(`Cleaned up remote directory ${remoteDir}`);
+    } catch {
+      logger.warn(`Failed to clean up remote directory ${remoteDir}`);
+    }
   }
 
   // ---- SSH command helpers ----

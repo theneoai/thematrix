@@ -54,6 +54,9 @@ export class ResourceAwareStrategy implements DistributionStrategy {
 
       const score = cpuAvailable * 0.35 + memAvailable * 0.35 + taskCapacity * 0.3;
 
+      // Guard against NaN scores from corrupted load data
+      if (isNaN(score)) continue;
+
       if (score > highestScore) {
         highestScore = score;
         bestNode = node;

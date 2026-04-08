@@ -148,17 +148,33 @@ export async function loadConfig(configPath?: string): Promise<RuntimeConfig> {
     './config/matrix.yml',
   ].filter(Boolean) as string[];
 
+  let config: RuntimeConfig | undefined;
+
   for (const path of paths) {
     const fullPath = resolve(path);
     if (existsSync(fullPath)) {
       const content = await readFile(fullPath, 'utf-8');
       const parsed = parse(content);
-      return mergeConfig(defaultConfig, parsed);
+      config = mergeConfig(defaultConfig, parsed);
+      break;
     }
   }
 
-  // 尝试从环境变量加载
-  return loadConfigFromEnv(defaultConfig);
+  if (!config) {
+    // 尝试从环境变量加载
+    config = loadConfigFromEnv(defaultConfig);
+  }
+
+  // Validate merged config
+  const validation = runtimeConfigSchema.safeParse(config);
+  if (!validation.success) {
+    console.warn(
+      '[config] Validation issues:',
+      validation.error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join('; ')
+    );
+  }
+
+  return config;
 }
 
 /**
@@ -179,15 +195,30 @@ function loadConfigFromEnv(baseConfig: RuntimeConfig): RuntimeConfig {
 
   // 环境
   if (process.env.MATRIX_ENV) {
-    config.env = process.env.MATRIX_ENV as RuntimeConfig['env'];
+    const validEnvs: RuntimeConfig['env'][] = ['development', 'staging', 'production'];
+    if (validEnvs.includes(process.env.MATRIX_ENV as RuntimeConfig['env'])) {
+      config.env = process.env.MATRIX_ENV as RuntimeConfig['env'];
+    } else {
+      console.warn(`[config] Invalid MATRIX_ENV value "${process.env.MATRIX_ENV}", keeping default "${config.env}"`);
+    }
   }
 
   // 日志
   if (process.env.MATRIX_LOG_LEVEL) {
-    config.logging.level = process.env.MATRIX_LOG_LEVEL as RuntimeConfig['logging']['level'];
+    const validLevels: RuntimeConfig['logging']['level'][] = ['debug', 'info', 'warn', 'error'];
+    if (validLevels.includes(process.env.MATRIX_LOG_LEVEL as RuntimeConfig['logging']['level'])) {
+      config.logging.level = process.env.MATRIX_LOG_LEVEL as RuntimeConfig['logging']['level'];
+    } else {
+      console.warn(`[config] Invalid MATRIX_LOG_LEVEL value "${process.env.MATRIX_LOG_LEVEL}", keeping default "${config.logging.level}"`);
+    }
   }
   if (process.env.MATRIX_LOG_FORMAT) {
-    config.logging.format = process.env.MATRIX_LOG_FORMAT as RuntimeConfig['logging']['format'];
+    const validFormats: RuntimeConfig['logging']['format'][] = ['json', 'pretty'];
+    if (validFormats.includes(process.env.MATRIX_LOG_FORMAT as RuntimeConfig['logging']['format'])) {
+      config.logging.format = process.env.MATRIX_LOG_FORMAT as RuntimeConfig['logging']['format'];
+    } else {
+      console.warn(`[config] Invalid MATRIX_LOG_FORMAT value "${process.env.MATRIX_LOG_FORMAT}", keeping default "${config.logging.format}"`);
+    }
   }
 
   // 数据库
@@ -222,6 +253,22 @@ function loadConfigFromEnv(baseConfig: RuntimeConfig): RuntimeConfig {
  * 合并配置
  */
 function mergeConfig(base: RuntimeConfig, override: Partial<RuntimeConfig>): RuntimeConfig {
+  // Deep merge providers: per-provider merge so partial overrides don't lose existing fields
+  type ProviderEntry = RuntimeConfig['llm']['providers'][string];
+  const mergedProviders: RuntimeConfig['llm']['providers'] = { ...base.llm.providers };
+  if (override.llm?.providers) {
+    for (const [name, providerOverride] of Object.entries(override.llm.providers) as [string, ProviderEntry][]) {
+      const existing = mergedProviders[name];
+      mergedProviders[name] = {
+        ...existing,
+        ...providerOverride,
+        ...(existing?.rateLimit || providerOverride?.rateLimit
+          ? { rateLimit: { ...existing?.rateLimit, ...providerOverride?.rateLimit } }
+          : {}),
+      };
+    }
+  }
+
   return {
     ...base,
     ...override,
@@ -232,7 +279,7 @@ function mergeConfig(base: RuntimeConfig, override: Partial<RuntimeConfig>): Run
     llm: {
       ...base.llm,
       ...override.llm,
-      providers: { ...base.llm.providers, ...override.llm?.providers },
+      providers: mergedProviders,
     },
     security: { ...base.security, ...override.security },
     monitoring: { ...base.monitoring, ...override.monitoring },
@@ -274,4 +321,33 @@ export function getConfig(): RuntimeConfig {
 
 export function setConfig(config: RuntimeConfig): void {
   globalConfig = config;
+}
+
+/**
+ * 返回脱敏配置（API Key 被 '***' 替换）
+ */
+export function sanitizeConfig(config: RuntimeConfig): RuntimeConfig {
+  const sanitized: RuntimeConfig = JSON.parse(JSON.stringify(config));
+
+  // Mask llm provider API keys
+  for (const key of Object.keys(sanitized.llm.providers)) {
+    const provider = sanitized.llm.providers[key];
+    if (provider.apiKey) {
+      provider.apiKey = '***';
+    }
+  }
+
+  // Mask security API keys
+  if (sanitized.security.apiKeys.length > 0) {
+    sanitized.security.apiKeys = sanitized.security.apiKeys.map(() => '***');
+  }
+
+  return sanitized;
+}
+
+/**
+ * 序列化配置为 JSON（自动脱敏）
+ */
+export function configToJSON(config: RuntimeConfig): string {
+  return JSON.stringify(sanitizeConfig(config));
 }

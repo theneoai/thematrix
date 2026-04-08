@@ -19,7 +19,11 @@ export class RoundRobinStrategy implements DistributionStrategy {
     }
 
     const index = this.currentIndex % nodes.length;
-    this.currentIndex = (this.currentIndex + 1) % nodes.length;
+    // Reset to avoid overflow: wrap around nodes.length to keep the counter small
+    this.currentIndex = index + 1;
+    if (this.currentIndex >= Number.MAX_SAFE_INTEGER - 1) {
+      this.currentIndex = 0;
+    }
     return nodes[index];
   }
 }

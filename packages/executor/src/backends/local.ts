@@ -121,9 +121,13 @@ export class LocalExecutionBackend implements ExecutionBackend {
 
   /** Clean up task record after a retention period to prevent memory leaks */
   private scheduleTaskCleanup(taskId: string, delayMs = 3_600_000): void {
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       this.tasks.delete(taskId);
     }, delayMs);
+    // Unref so the timer doesn't keep the process alive
+    if (typeof timer === 'object' && 'unref' in timer) {
+      timer.unref();
+    }
   }
 
   async cancel(taskId: string): Promise<void> {

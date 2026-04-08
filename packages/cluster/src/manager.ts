@@ -34,6 +34,7 @@ export class ClusterManager implements IClusterManager {
   private failedTasks = 0;
   private completedTasksLastHour = 0;
   private completedTasksResetTimer: ReturnType<typeof setInterval> | null = null;
+  private orphanedTasks: Map<string, Set<string>> = new Map();
 
   constructor(config: DistributionConfig, logger?: Logger) {
     this.config = config;
@@ -96,10 +97,11 @@ export class ClusterManager implements IClusterManager {
     this.logger.info(`Draining node ${nodeId} (${node.hostname})`);
     this.registry.updateStatus(nodeId, 'draining');
 
-    // Wait for active tasks to complete
-    const pollIntervalMs = 1000;
+    // Wait for active tasks to complete with exponential backoff
     const maxWaitMs = this.config.queueTimeoutMs ?? 60_000;
     const startTime = Date.now();
+    let pollIntervalMs = 250;
+    const maxPollIntervalMs = 5000;
 
     while (Date.now() - startTime < maxWaitMs) {
       const activeTasks = this.distributor.getActiveTasksForNode(nodeId);
@@ -111,6 +113,7 @@ export class ClusterManager implements IClusterManager {
         `Node ${nodeId} still has ${activeTasks.size} active tasks, waiting...`,
       );
       await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+      pollIntervalMs = Math.min(pollIntervalMs * 2, maxPollIntervalMs);
     }
 
     this.logger.warn(`Node ${nodeId} drain timed out, some tasks may still be active`);
@@ -186,11 +189,26 @@ export class ClusterManager implements IClusterManager {
     }
   }
 
+  /**
+   * Get tasks that were orphaned when their assigned node went offline.
+   */
+  getOrphanedTasks(): Map<string, Set<string>> {
+    return new Map(this.orphanedTasks);
+  }
+
   private handleNodeOffline(nodeId: string): void {
     this.logger.warn(`Node ${nodeId} went offline`);
 
+    // Preserve the active task list so callers can retrieve and re-submit them
+    const activeTasks = this.distributor.getActiveTasksForNode(nodeId);
+    if (activeTasks.size > 0) {
+      this.orphanedTasks.set(nodeId, new Set(activeTasks));
+      this.logger.info(
+        `Tracked ${activeTasks.size} orphaned tasks from offline node ${nodeId}`,
+      );
+    }
+
     if (this.config.autoFailover) {
-      const activeTasks = this.distributor.getActiveTasksForNode(nodeId);
       if (activeTasks.size > 0) {
         this.logger.info(
           `Auto-failover: ${activeTasks.size} tasks from node ${nodeId} need reassignment`,
