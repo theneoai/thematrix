@@ -208,7 +208,7 @@ export class AgentLoop {
       await this.publishIteration(iteration, lastOutput);
 
       // Check termination conditions
-      if (lastOutput.includes('[DONE]')) {
+      if (/\[\s*DONE\s*\]/i.test(lastOutput)) {
         logger.info('Agent signalled [DONE]');
         this.trace?.addDecision({
           id: generateId(),

@@ -4,13 +4,14 @@
 
 import type { ProviderName } from './provider.js';
 
-export type AgentStatus = 
-  | 'created' 
-  | 'initializing' 
-  | 'running' 
-  | 'paused' 
-  | 'stopping' 
-  | 'stopped' 
+export type AgentStatus =
+  | 'created'
+  | 'initializing'
+  | 'running'
+  | 'paused'
+  | 'stopping'
+  | 'stopped'
+  | 'completed'
   | 'error';
 
 export interface AgentPersona {

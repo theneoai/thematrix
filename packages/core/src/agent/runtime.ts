@@ -63,6 +63,7 @@ export class AgentRuntime {
   private outputSchema?: Record<string, unknown>;
   private telemetry?: ITelemetryProvider;
   private cognitiveMemory?: ICognitiveMemoryManager;
+  private turnInProgress = false;
   private metrics = {
     startTime: undefined as Date | undefined,
     endTime: undefined as Date | undefined,
@@ -78,6 +79,7 @@ export class AgentRuntime {
     'running': ['paused', 'stopped', 'error', 'completed'],
     'paused': ['running', 'stopped', 'error'],
     'error': ['running', 'stopped'],  // 'running' via resetFromError
+    'stopping': ['stopped', 'error'],
     'completed': ['stopped'],
     'stopped': [],
   };
@@ -129,6 +131,11 @@ export class AgentRuntime {
     if (this.status !== 'running') {
       throw new Error(`Agent is not running, current status: ${this.status}`);
     }
+
+    if (this.turnInProgress) {
+      throw new Error('Agent is already processing a turn, concurrent calls are not allowed');
+    }
+    this.turnInProgress = true;
 
     this.metrics.totalTurns++;
 
@@ -510,6 +517,8 @@ export class AgentRuntime {
       });
 
       throw error;
+    } finally {
+      this.turnInProgress = false;
     }
   }
 

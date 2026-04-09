@@ -534,7 +534,7 @@ export class MonitorAPI {
     if (!this.providers.approvalManager) return this.sendNotImplemented(res);
     try {
       const body = await this.parseBody(req);
-      await this.providers.approvalManager.approve(params.id, body.respondedBy);
+      await this.providers.approvalManager.approve(params.id, body.respondedBy as string | undefined);
       this.sendJson(res, 200, { status: 'approved' });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -546,7 +546,7 @@ export class MonitorAPI {
     if (!this.providers.approvalManager) return this.sendNotImplemented(res);
     try {
       const body = await this.parseBody(req);
-      await this.providers.approvalManager.reject(params.id, body.respondedBy);
+      await this.providers.approvalManager.reject(params.id, body.respondedBy as string | undefined);
       this.sendJson(res, 200, { status: 'rejected' });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

@@ -60,11 +60,10 @@ export class EventBus implements IEventBus {
     // Guard against listener accumulation per pattern
     const currentCount = this.listenerCounts.get(pattern) ?? 0;
     if (currentCount >= EventBus.MAX_LISTENERS_PER_PATTERN) {
-      logger.warn(
+      throw new Error(
         `Max listeners (${EventBus.MAX_LISTENERS_PER_PATTERN}) reached for pattern "${pattern}". ` +
         `Subscription rejected to prevent memory leak.`,
       );
-      return () => {}; // noop unsubscribe
     }
     this.listenerCounts.set(pattern, currentCount + 1);
 
@@ -73,8 +72,8 @@ export class EventBus implements IEventBus {
 
     return () => {
       this.emitter.off(pattern, wrappedHandler);
-      const count = this.listenerCounts.get(pattern) ?? 1;
-      this.listenerCounts.set(pattern, count - 1);
+      const count = this.listenerCounts.get(pattern) ?? 0;
+      this.listenerCounts.set(pattern, Math.max(0, count - 1));
       logger.debug(`Unsubscribed from pattern: ${pattern}`);
     };
   }

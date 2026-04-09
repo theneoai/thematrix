@@ -12,8 +12,25 @@ import type {
 } from '@thematrix/types';
 import type { ExecutionTask } from '@thematrix/types';
 
+export interface ResourceAwareWeights {
+  cpu: number;
+  memory: number;
+  disk: number;
+}
+
+export interface ResourceAwareOptions {
+  weights?: Partial<ResourceAwareWeights>;
+}
+
+const DEFAULT_WEIGHTS: ResourceAwareWeights = { cpu: 0.35, memory: 0.35, disk: 0.30 };
+
 export class ResourceAwareStrategy implements DistributionStrategy {
   readonly type: DistributionStrategyType = 'resource-aware';
+  private readonly weights: ResourceAwareWeights;
+
+  constructor(options?: ResourceAwareOptions) {
+    this.weights = { ...DEFAULT_WEIGHTS, ...options?.weights };
+  }
 
   selectNode(nodes: ClusterNode[], task: ExecutionTask): ClusterNode | null {
     if (nodes.length === 0) {
@@ -37,14 +54,13 @@ export class ResourceAwareStrategy implements DistributionStrategy {
     }
 
     // Score each node based on available resources
-    let bestNode: ClusterNode | null = null;
-    let highestScore = -Infinity;
+    const scored: Array<{ node: ClusterNode; score: number }> = [];
 
     for (const node of candidates) {
       const cpuAvailable = 100 - node.currentLoad.cpuUsagePercent;
       const memAvailable = 100 - node.currentLoad.memoryUsagePercent;
 
-      // Weighted score: CPU availability (35%) + memory availability (35%) + task capacity (30%)
+      // Weighted score: CPU availability + memory availability + task capacity
       // Task capacity accounts for both active and queued tasks
       const totalTasks = node.currentLoad.activeTasks + node.currentLoad.queuedTasks;
       const taskCapacity =
@@ -52,17 +68,22 @@ export class ResourceAwareStrategy implements DistributionStrategy {
           ? Math.max(0, (1 - totalTasks / node.capabilities.maxConcurrentTasks) * 100)
           : 0;
 
-      const score = cpuAvailable * 0.35 + memAvailable * 0.35 + taskCapacity * 0.3;
+      const score =
+        cpuAvailable * this.weights.cpu +
+        memAvailable * this.weights.memory +
+        taskCapacity * this.weights.disk;
 
-      // Guard against NaN scores from corrupted load data
-      if (isNaN(score)) continue;
+      // Guard against NaN and -Infinity scores from corrupted load data
+      if (!Number.isFinite(score)) continue;
 
-      if (score > highestScore) {
-        highestScore = score;
-        bestNode = node;
-      }
+      scored.push({ node, score });
     }
 
-    return bestNode;
+    if (scored.length === 0) {
+      return null;
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+    return scored[0].node;
   }
 }

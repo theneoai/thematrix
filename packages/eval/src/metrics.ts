@@ -187,6 +187,8 @@ function cosineSimilarity(a: number[], b: number[]): number {
 export interface CreateMetricOptions {
   llmAdapter?: LLMAdapter;
   embeddingProvider?: IEmbeddingProvider;
+  /** Model name for LLM-based metrics (defaults to 'gpt-4o-mini') */
+  model?: string;
 }
 
 /**
@@ -213,7 +215,7 @@ export function createMetric(
       if (!config.prompt) {
         throw new Error('Prompt template required for llm-judge metric');
       }
-      return LLMJudgeMetric(config.name, config.prompt, options.llmAdapter);
+      return LLMJudgeMetric(config.name, config.prompt, options.llmAdapter, options.model ?? 'gpt-4o-mini');
     }
 
     case 'semantic-similarity': {

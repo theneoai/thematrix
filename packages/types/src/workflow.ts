@@ -197,3 +197,39 @@ export interface IApprovalManager {
   waitForApproval(approvalId: string, timeoutMs?: number): Promise<ApprovalStatus>;
   listPending(): ApprovalRequest[];
 }
+
+// ============================================================
+// Workflow Checkpoint & Resume
+// ============================================================
+
+/** Snapshot of workflow state for durable checkpointing */
+export interface WorkflowCheckpoint {
+  /** Unique checkpoint ID */
+  id: string;
+  /** Workflow run ID */
+  runId: string;
+  /** Workflow definition ID */
+  workflowId: string;
+  /** IDs of nodes that have completed successfully */
+  completedNodes: string[];
+  /** Outputs from completed nodes */
+  nodeOutputs: Record<string, unknown>;
+  /** Workflow-level variables */
+  variables: Record<string, unknown>;
+  /** When this checkpoint was taken */
+  createdAt: Date;
+  /** Optimistic locking version (increments on each checkpoint) */
+  version: number;
+}
+
+/** Interface for checkpoint persistence */
+export interface ICheckpointStore {
+  /** Save a checkpoint (upsert by runId) */
+  save(checkpoint: WorkflowCheckpoint): Promise<void>;
+  /** Load the latest checkpoint for a workflow run */
+  load(runId: string): Promise<WorkflowCheckpoint | undefined>;
+  /** Delete checkpoint after successful workflow completion */
+  delete(runId: string): Promise<void>;
+  /** List all active checkpoints */
+  listActive(): Promise<WorkflowCheckpoint[]>;
+}

@@ -4,6 +4,7 @@
 
 // Export base types first (to avoid circular dependency issues)
 export * from './llm.js';
+export * from './error.js';
 export * from './event.js';
 export * from './message.js';
 
