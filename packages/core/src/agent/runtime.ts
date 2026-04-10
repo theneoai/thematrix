@@ -178,12 +178,17 @@ export class AgentRuntime {
         timestamp: new Date(),
       });
 
+      // ── Pre-turn memory injection ─────────────────────────────
+      // Proactively recall relevant memories before building the LLM prompt,
+      // so the agent can leverage past experience and learned patterns.
+      const systemPromptWithMemory = await this.buildSystemPromptWithMemory(effectiveInput);
+
       // Get conversation history
       const history = await this.memory.getHistory(this.instanceId);
 
       // Build messages for LLM — preserve toolCalls/toolResults so adapters can format them correctly
       const messages = [
-        { role: 'system' as const, content: this.definition.persona.systemPrompt },
+        { role: 'system' as const, content: systemPromptWithMemory },
         ...history.map(h => ({
           role: h.role as 'user' | 'assistant' | 'tool',
           content: h.content,
@@ -520,6 +525,68 @@ export class AgentRuntime {
     } finally {
       this.turnInProgress = false;
     }
+  }
+
+  /**
+   * Build an augmented system prompt that injects relevant cognitive memories
+   * recalled from the agent's episodic and procedural memory stores.
+   *
+   * This implements the "Pre-Turn Memory Injection" pattern:
+   *   recallEpisodes(input) → recall relevant past experiences
+   *   queryProceduralPatterns(input) → recall successful tool sequences
+   *   → inject as additional context into the system prompt
+   *
+   * If no cognitive memory is configured, returns the base system prompt unchanged.
+   */
+  private async buildSystemPromptWithMemory(input: string): Promise<string> {
+    if (!this.cognitiveMemory) {
+      return this.definition.persona.systemPrompt;
+    }
+
+    const memoryParts: string[] = [];
+
+    try {
+      // Recall relevant past episodes (limit to top 3 to avoid prompt bloat)
+      const episodes = await this.cognitiveMemory.recallEpisodes(input, {
+        agentId: this.definition.id,
+        topK: 3,
+        minImportance: 0.4,
+      });
+
+      if (episodes.length > 0) {
+        const episodeSummaries = episodes
+          .map(ep => `- [${ep.outcome}] ${ep.summary}${ep.lessons?.length ? ` (lesson: ${ep.lessons[0]})` : ''}`)
+          .join('\n');
+        memoryParts.push(`Relevant past experiences:\n${episodeSummaries}`);
+      }
+    } catch (err) {
+      logger.warn(`Pre-turn episodic recall failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    try {
+      // Recall successful procedural patterns matching the current goal
+      const patterns = await this.cognitiveMemory.findProcedures(input, 2);
+      if (patterns.length > 0) {
+        const patternSummaries = patterns
+          .filter(p => p.successRate > 0.6)
+          .map(p => {
+            const toolNames = p.toolSequence.map(s => s.toolOrAgent).join(' → ');
+            return `- ${p.name}: use [${toolNames}] (success rate: ${(p.successRate * 100).toFixed(0)}%)`;
+          })
+          .join('\n');
+        if (patternSummaries) {
+          memoryParts.push(`Proven tool sequences for similar tasks:\n${patternSummaries}`);
+        }
+      }
+    } catch (err) {
+      logger.warn(`Pre-turn procedural recall failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    if (memoryParts.length === 0) {
+      return this.definition.persona.systemPrompt;
+    }
+
+    return `${this.definition.persona.systemPrompt}\n\n---\n${memoryParts.join('\n\n')}`;
   }
 
   private async executeToolCalls(toolCalls: ToolCallRequest[]): Promise<ToolCallResult[]> {

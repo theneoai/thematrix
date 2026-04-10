@@ -14,15 +14,37 @@ import { EventEmitter } from 'events';
 
 const logger = new Logger({ prefix: 'EventBus' });
 
+export type EventBusOverflowBehavior = 'throw' | 'drop-oldest' | 'reject-new';
+
+export interface EventBusOptions {
+  /**
+   * Maximum number of subscribers per event pattern.
+   * Default: 50.
+   */
+  maxListenersPerPattern?: number;
+  /**
+   * Behavior when the subscriber limit is reached:
+   * - 'throw': throw an error (default, safest — makes the leak visible)
+   * - 'drop-oldest': silently remove the oldest subscriber to make room
+   * - 'reject-new': silently discard the new subscription and return a no-op unsubscribe
+   */
+  overflow?: EventBusOverflowBehavior;
+}
+
 export class EventBus implements IEventBus {
   private emitter = new EventEmitter();
   private store: IEventStore;
-  private static readonly MAX_LISTENERS_PER_PATTERN = 50;
+  private readonly maxListenersPerPattern: number;
+  private readonly overflow: EventBusOverflowBehavior;
   private listenerCounts = new Map<string, number>();
+  /** Tracks raw emitter listeners per pattern for drop-oldest support */
+  private patternListeners = new Map<string, Array<(event: DomainEvent) => void>>();
 
-  constructor(store: IEventStore) {
+  constructor(store: IEventStore, options?: EventBusOptions) {
     this.store = store;
-    this.emitter.setMaxListeners(100);
+    this.maxListenersPerPattern = options?.maxListenersPerPattern ?? 50;
+    this.overflow = options?.overflow ?? 'throw';
+    this.emitter.setMaxListeners(this.maxListenersPerPattern * 10);
   }
 
   async publish(event: DomainEvent): Promise<void> {
@@ -59,23 +81,79 @@ export class EventBus implements IEventBus {
 
     // Guard against listener accumulation per pattern
     const currentCount = this.listenerCounts.get(pattern) ?? 0;
-    if (currentCount >= EventBus.MAX_LISTENERS_PER_PATTERN) {
-      throw new Error(
-        `Max listeners (${EventBus.MAX_LISTENERS_PER_PATTERN}) reached for pattern "${pattern}". ` +
-        `Subscription rejected to prevent memory leak.`,
-      );
-    }
-    this.listenerCounts.set(pattern, currentCount + 1);
+    if (currentCount >= this.maxListenersPerPattern) {
+      switch (this.overflow) {
+        case 'throw':
+          throw new Error(
+            `Max listeners (${this.maxListenersPerPattern}) reached for pattern "${pattern}". ` +
+            `Subscription rejected to prevent memory leak. Use overflow: 'drop-oldest' or 'reject-new' to change this behavior.`,
+          );
 
+        case 'reject-new':
+          logger.warn(
+            `Max listeners (${this.maxListenersPerPattern}) reached for pattern "${pattern}". ` +
+            `New subscription silently rejected (overflow=reject-new).`,
+          );
+          return () => { /* no-op */ };
+
+        case 'drop-oldest': {
+          const listeners = this.patternListeners.get(pattern) ?? [];
+          if (listeners.length > 0) {
+            const oldest = listeners.shift()!;
+            this.emitter.off(pattern, oldest);
+            this.listenerCounts.set(pattern, Math.max(0, (this.listenerCounts.get(pattern) ?? 0) - 1));
+            logger.warn(
+              `Max listeners (${this.maxListenersPerPattern}) reached for pattern "${pattern}". ` +
+              `Oldest subscriber evicted (overflow=drop-oldest).`,
+            );
+          }
+          break;
+        }
+      }
+    }
+
+    // Track raw listener for drop-oldest eviction support
+    const listeners = this.patternListeners.get(pattern) ?? [];
+    listeners.push(wrappedHandler);
+    this.patternListeners.set(pattern, listeners);
+
+    this.listenerCounts.set(pattern, (this.listenerCounts.get(pattern) ?? 0) + 1);
     this.emitter.on(pattern, wrappedHandler);
     logger.debug(`Subscribed to pattern: ${pattern}`);
 
     return () => {
       this.emitter.off(pattern, wrappedHandler);
+      // Remove from raw listener tracking
+      const ls = this.patternListeners.get(pattern);
+      if (ls) {
+        const idx = ls.indexOf(wrappedHandler);
+        if (idx !== -1) ls.splice(idx, 1);
+        if (ls.length === 0) this.patternListeners.delete(pattern);
+      }
       const count = this.listenerCounts.get(pattern) ?? 0;
-      this.listenerCounts.set(pattern, Math.max(0, count - 1));
+      const newCount = Math.max(0, count - 1);
+      if (newCount === 0) {
+        this.listenerCounts.delete(pattern);
+      } else {
+        this.listenerCounts.set(pattern, newCount);
+      }
       logger.debug(`Unsubscribed from pattern: ${pattern}`);
     };
+  }
+
+  /**
+   * Return the current subscriber count for a pattern.
+   * Useful for monitoring and leak detection.
+   */
+  getSubscriberCount(pattern: string): number {
+    return this.listenerCounts.get(pattern) ?? 0;
+  }
+
+  /**
+   * Return all patterns that currently have active subscribers.
+   */
+  getActivePatterns(): string[] {
+    return Array.from(this.listenerCounts.keys());
   }
 
   async *replay(fromEventId?: string, filter?: EventFilter): AsyncIterable<DomainEvent> {
