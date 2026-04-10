@@ -15,6 +15,8 @@ import type {
   IApprovalManager,
   ITelemetryProvider,
   ICognitiveMemoryManager,
+  ICheckpointStore,
+  WorkflowCheckpoint,
 } from '@thematrix/types';
 import { EventTypes } from '@thematrix/types';
 import { Logger, generateWorkflowRunId, sleep } from '@thematrix/utils';
@@ -22,6 +24,7 @@ import { generateId } from '@thematrix/utils';
 import { AgentRuntime } from '../agent/runtime.js';
 import { AgentRegistry } from '../agent/registry.js';
 import { DynamicWorkflowExecutor } from './dynamic.js';
+import { CognitiveWorkflowExecutor } from './cognitive.js';
 import { ApprovalManager } from './approval.js';
 import { WorkflowError, ResourceNotFoundError, classifyError } from '../error/index.js';
 import { metrics, Metrics } from '../metrics/index.js';
@@ -55,6 +58,8 @@ export interface WorkflowEngineOptions {
   telemetry?: ITelemetryProvider;
   /** Cognitive memory manager, passed through to AgentRuntime instances (optional) */
   cognitiveMemory?: ICognitiveMemoryManager;
+  /** Checkpoint store for durable workflow state (optional, enables resume) */
+  checkpointStore?: ICheckpointStore;
 }
 
 interface WorkflowStats {
@@ -79,6 +84,7 @@ export class WorkflowEngine {
   private approvalManager?: IApprovalManager;
   private telemetry?: ITelemetryProvider;
   private cognitiveMemory?: ICognitiveMemoryManager;
+  private checkpointStore?: ICheckpointStore;
   private runs = new Map<string, WorkflowRun>();
   private runStats = new Map<string, WorkflowStats>();
   private activeAgents = new Map<string, Map<string, AgentRuntime>>();
@@ -97,6 +103,7 @@ export class WorkflowEngine {
     this.approvalManager = options.approvalManager;
     this.telemetry = options.telemetry;
     this.cognitiveMemory = options.cognitiveMemory;
+    this.checkpointStore = options.checkpointStore;
     this.globalTimeoutMs = options.globalTimeoutMs ?? 300000; // 5分钟默认
     this.maxConcurrentWorkflows = options.maxConcurrentWorkflows ?? 10;
   }
@@ -173,6 +180,8 @@ export class WorkflowEngine {
       executionPromise = this.executeDAG(definition, run);
     } else if (definition.mode === 'dynamic') {
       executionPromise = this.executeDynamic(definition, run);
+    } else if (definition.mode === 'cognitive') {
+      executionPromise = this.executeCognitive(definition, run);
     } else {
       executionPromise = this.executeStateMachine(definition, run);
     }
@@ -322,6 +331,11 @@ export class WorkflowEngine {
         completedNodes.add(node.id);
         runningNodes.delete(node.id);
         nodeStats.completedAt = new Date();
+
+        // Save checkpoint after successful node completion
+        if (this.checkpointStore) {
+          await this.saveCheckpoint(run);
+        }
 
         // 记录指标
         const duration = (Date.now() - nodeStartTime) / 1000;
@@ -570,6 +584,21 @@ export class WorkflowEngine {
       cognitiveMemory: this.cognitiveMemory,
     });
 
+    await executor.execute(definition, run);
+  }
+
+  private async executeCognitive(
+    definition: WorkflowDefinition,
+    run: WorkflowRun
+  ): Promise<void> {
+    const executor = new CognitiveWorkflowExecutor({
+      eventBus: this.eventBus,
+      memory: this.memory,
+      agentRegistry: this.agentRegistry,
+      llmAdapterFactory: this.llmAdapterFactory,
+      telemetry: this.telemetry,
+      cognitiveMemory: this.cognitiveMemory,
+    });
     await executor.execute(definition, run);
   }
 
@@ -847,6 +876,13 @@ export class WorkflowEngine {
     run.completedAt = new Date();
     run.output = run.context.nodeOutputs;
 
+    // Clean up checkpoint on successful completion
+    if (this.checkpointStore) {
+      await this.checkpointStore.delete(runId).catch(err => {
+        logger.warn(`Failed to delete checkpoint for run ${runId}:`, err);
+      });
+    }
+
     const stats = this.runStats.get(runId);
     const duration = stats 
       ? (run.completedAt.getTime() - stats.startedAt.getTime()) / 1000 
@@ -908,6 +944,85 @@ export class WorkflowEngine {
 
     await this.cleanup(runId);
     logger.error(`Workflow ${run.workflowId} failed:`, error);
+  }
+
+  private async saveCheckpoint(run: WorkflowRun): Promise<void> {
+    if (!this.checkpointStore) return;
+    try {
+      const existing = await this.checkpointStore.load(run.runId);
+      const checkpoint: WorkflowCheckpoint = {
+        id: existing?.id ?? generateId(),
+        runId: run.runId,
+        workflowId: run.workflowId,
+        completedNodes: Object.keys(run.context.nodeOutputs),
+        nodeOutputs: run.context.nodeOutputs,
+        variables: run.context.variables,
+        createdAt: new Date(),
+        version: (existing?.version ?? 0) + 1,
+      };
+      await this.checkpointStore.save(checkpoint);
+    } catch (err) {
+      logger.warn(`Failed to save checkpoint for run ${run.runId}:`, err);
+    }
+  }
+
+  async resumeFromCheckpoint(
+    definition: WorkflowDefinition,
+    checkpoint: WorkflowCheckpoint,
+  ): Promise<WorkflowRun> {
+    logger.info(`Resuming workflow ${definition.id} from checkpoint (run: ${checkpoint.runId}, version: ${checkpoint.version})`);
+
+    const run: WorkflowRun = {
+      runId: checkpoint.runId,
+      workflowId: definition.id,
+      status: 'running',
+      input: checkpoint.variables,
+      context: {
+        variables: checkpoint.variables,
+        nodeOutputs: checkpoint.nodeOutputs,
+      },
+      startedAt: new Date(),
+    };
+
+    this.runs.set(run.runId, run);
+    this.activeAgents.set(run.runId, new Map());
+    this.abortControllers.set(run.runId, new AbortController());
+    this.runStats.set(run.runId, { startedAt: new Date(), nodeExecutions: new Map() });
+    this.activeWorkflowCount++;
+
+    metrics.inc(Metrics.WORKFLOW_RUNS_TOTAL, { workflow_id: definition.id });
+    metrics.set(Metrics.WORKFLOW_RUNS_ACTIVE, this.activeWorkflowCount);
+
+    await this.publishEvent(EventTypes.WORKFLOW_STARTED, {
+      workflowId: definition.id,
+      runId: run.runId,
+      input: run.input,
+      resumedFromCheckpoint: checkpoint.version,
+    });
+
+    // Set up timeout and execute
+    const abortController = this.abortControllers.get(run.runId)!;
+    const timeoutHandle = setTimeout(() => abortController.abort(), this.globalTimeoutMs);
+
+    // Execute with checkpoint-aware DAG (skips completed nodes)
+    void this.executeDAG(definition, run)
+      .then(() => {
+        clearTimeout(timeoutHandle);
+        return this.completeWorkflow(run.runId);
+      })
+      .catch(error => {
+        clearTimeout(timeoutHandle);
+        const finalError = abortController.signal.aborted
+          ? new WorkflowError(`Workflow timed out after ${this.globalTimeoutMs}ms`, definition.id, run.runId)
+          : error;
+        return this.handleWorkflowError(run.runId, finalError);
+      })
+      .catch(err => {
+        logger.error(`Critical: workflow lifecycle handler failed for run ${run.runId}:`, err);
+        return this.cleanup(run.runId).catch(() => {});
+      });
+
+    return run;
   }
 
   async pauseWorkflow(runId: string): Promise<void> {

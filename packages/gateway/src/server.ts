@@ -44,7 +44,7 @@ export class GatewayServer {
     this.logger = new Logger({ prefix: 'gateway' });
     this.basePath = config.basePath ?? '/hooks';
     this.onTrigger = onTrigger;
-    this.maxBodySize = (config as Record<string, unknown>).maxBodySize as number ?? 1024 * 1024; // 1 MB default
+    this.maxBodySize = ((config as unknown) as Record<string, unknown>).maxBodySize as number ?? 1024 * 1024; // 1 MB default
 
     // Register channel adapters from config
     for (const channelConfig of config.channels) {
@@ -153,10 +153,22 @@ export class GatewayServer {
     const entry = this.rateLimitMap.get(ip);
     if (!entry || now >= entry.resetAt) {
       this.rateLimitMap.set(ip, { count: 1, resetAt: now + this.rateLimitWindow });
+      // Periodic cleanup: remove stale entries when map grows large
+      if (this.rateLimitMap.size > 10_000) {
+        this.cleanupRateLimitMap(now);
+      }
       return false;
     }
     entry.count += 1;
     return entry.count > this.rateLimitMax;
+  }
+
+  private cleanupRateLimitMap(now: number): void {
+    for (const [ip, entry] of this.rateLimitMap) {
+      if (now >= entry.resetAt) {
+        this.rateLimitMap.delete(ip);
+      }
+    }
   }
 
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {

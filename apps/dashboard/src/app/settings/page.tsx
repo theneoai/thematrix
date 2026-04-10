@@ -72,7 +72,7 @@ export default function SettingsPage() {
   const [expandedSuiteId, setExpandedSuiteId] = useState<string | null>(null);
   const [guardrailModalOpen, setGuardrailModalOpen] = useState(false);
   const [editingGuardrailId, setEditingGuardrailId] = useState<string | null>(null);
-  const [guardrailForm, setGuardrailForm] = useState({ name: '', type: 'both' as const, action: 'block' as const, pattern: '', description: '' });
+  const [guardrailForm, setGuardrailForm] = useState<{ name: string; type: 'input' | 'output' | 'both'; action: 'block' | 'warn' | 'rewrite'; pattern: string; description: string }>({ name: '', type: 'both', action: 'block', pattern: '', description: '' });
   const [deletingGuardrailId, setDeletingGuardrailId] = useState<string | null>(null);
 
   // ── Queries ─────────────────────────────────────────────────
@@ -481,7 +481,7 @@ export default function SettingsPage() {
                             variant="ghost"
                             onClick={() => {
                               setEditingGuardrailId(g.id);
-                              setGuardrailForm({ name: g.name, type: g.type, action: g.action, pattern: '', description: '' });
+                              setGuardrailForm({ name: g.name, type: g.type as 'input' | 'output' | 'both', action: g.action, pattern: '', description: '' });
                               setGuardrailModalOpen(true);
                             }}
                           >

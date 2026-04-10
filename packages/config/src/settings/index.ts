@@ -263,9 +263,9 @@ function mergeConfig(base: RuntimeConfig, override: Partial<RuntimeConfig>): Run
         ...existing,
         ...providerOverride,
         ...(existing?.rateLimit || providerOverride?.rateLimit
-          ? { rateLimit: { ...existing?.rateLimit, ...providerOverride?.rateLimit } }
+          ? { rateLimit: { ...existing?.rateLimit, ...providerOverride?.rateLimit } as ProviderEntry['rateLimit'] }
           : {}),
-      };
+      } as ProviderEntry;
     }
   }
 

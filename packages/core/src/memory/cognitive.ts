@@ -341,6 +341,11 @@ export class CognitiveMemoryManager implements ICognitiveMemoryManager {
   }
 
   async updateProcedureStats(patternId: string, success: boolean, durationMs: number): Promise<void> {
+    if (!Number.isFinite(durationMs) || durationMs < 0) {
+      logger.warn(`Invalid durationMs (${durationMs}) for pattern ${patternId}, clamping to 0`);
+      durationMs = 0;
+    }
+
     const row = this.db.prepare('SELECT usage_count, success_rate, avg_duration_ms FROM procedural_patterns WHERE id = ?')
       .get(patternId) as { usage_count: number; success_rate: number; avg_duration_ms: number } | undefined;
 
@@ -446,6 +451,88 @@ export class CognitiveMemoryManager implements ICognitiveMemoryManager {
     }
 
     return forgotten;
+  }
+
+  // =====================================================================
+  // Proactive Recall — retrieve relevant memories for a task context
+  // =====================================================================
+
+  /**
+   * Proactively recall relevant memories across all three layers for a given task.
+   * Returns a formatted context string suitable for injection into system prompts.
+   */
+  async proactiveRecall(agentId: string, taskDescription: string, options?: {
+    maxEpisodes?: number;
+    maxFacts?: number;
+    maxProcedures?: number;
+  }): Promise<string> {
+    const maxEpisodes = options?.maxEpisodes ?? 3;
+    const maxFacts = options?.maxFacts ?? 5;
+    const maxProcedures = options?.maxProcedures ?? 2;
+
+    const parts: string[] = [];
+
+    // 1. Recall relevant episodic memories
+    try {
+      const episodes = await this.recallEpisodes(taskDescription, {
+        agentId,
+        topK: maxEpisodes,
+        minImportance: 0.3,
+      });
+
+      if (episodes.length > 0) {
+        parts.push('## Relevant Past Experiences');
+        for (const ep of episodes) {
+          const outcome = ep.outcome === 'success' ? '[success]' : '[failure]';
+          parts.push(`- ${outcome} ${ep.summary} (importance: ${ep.importance.toFixed(2)})`);
+          if (ep.lessons && ep.lessons.length > 0) {
+            parts.push(`  Lessons: ${ep.lessons.join('; ')}`);
+          }
+        }
+      }
+    } catch (err) {
+      logger.warn(`Proactive recall: episodic query failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    // 2. Recall relevant procedural patterns
+    try {
+      const procedures = await this.findProcedures(taskDescription, maxProcedures);
+
+      if (procedures.length > 0) {
+        parts.push('## Known Effective Patterns');
+        for (const proc of procedures) {
+          const tools = proc.toolSequence.map(t => t.toolOrAgent).join(' -> ');
+          parts.push(`- ${proc.name}: ${tools} (success: ${(proc.successRate * 100).toFixed(0)}%, used ${proc.usageCount}x)`);
+        }
+      }
+    } catch (err) {
+      logger.warn(`Proactive recall: procedural query failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    // 3. Recall relevant semantic facts
+    try {
+      const keywords = taskDescription.split(/\s+/).filter(w => w.length > 3).slice(0, 5);
+      const allFacts: SemanticFact[] = [];
+      for (const keyword of keywords) {
+        const facts = await this.queryFacts({ subject: keyword });
+        allFacts.push(...facts);
+      }
+
+      const uniqueFacts = [...new Map(allFacts.map(f => [f.id, f])).values()]
+        .sort((a, b) => b.confidence - a.confidence)
+        .slice(0, maxFacts);
+
+      if (uniqueFacts.length > 0) {
+        parts.push('## Relevant Knowledge');
+        for (const fact of uniqueFacts) {
+          parts.push(`- ${fact.subject} ${fact.predicate} ${fact.object} (confidence: ${fact.confidence.toFixed(2)})`);
+        }
+      }
+    } catch (err) {
+      logger.warn(`Proactive recall: semantic query failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    return parts.length > 0 ? parts.join('\n') : '';
   }
 
   /** 关闭数据库连接 */

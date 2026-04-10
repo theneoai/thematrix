@@ -143,3 +143,91 @@ export const EventTypes = {
   MEMORY_CONSOLIDATED: 'memory.consolidated',
   MEMORY_DECAYED: 'memory.decayed',
 } as const;
+
+// ============================================================
+// Typed Event Payloads
+// ============================================================
+
+export interface AgentCreatedPayload {
+  agentId: string;
+  instanceId: string;
+  workflowRunId: string;
+}
+
+export interface AgentTurnCompletedPayload {
+  agentId: string;
+  instanceId: string;
+  turnId: string;
+  tokensUsed: number;
+}
+
+export interface AgentErrorPayload {
+  agentId: string;
+  instanceId: string;
+  turnId: string;
+  error: string;
+}
+
+export interface WorkflowStartedPayload {
+  workflowId: string;
+  runId: string;
+  input: Record<string, unknown>;
+}
+
+export interface WorkflowCompletedPayload {
+  workflowId: string;
+  runId: string;
+  output: Record<string, unknown>;
+  durationMs: number;
+}
+
+export interface WorkflowFailedPayload {
+  workflowId: string;
+  runId: string;
+  error: string;
+}
+
+export interface WorkflowNodeStartedPayload {
+  workflowId: string;
+  runId: string;
+  nodeId: string;
+  agentId: string;
+}
+
+export interface WorkflowNodeCompletedPayload {
+  workflowId: string;
+  runId: string;
+  nodeId: string;
+  output?: unknown;
+  durationMs?: number;
+}
+
+export interface GuardrailTriggeredPayload {
+  guardrailId: string;
+  guardrailName: string;
+  direction: 'input' | 'output';
+  violations: Array<{ type: string; severity: string; message: string }>;
+}
+
+export interface TokenConsumedPayload {
+  ownerId: string;
+  provider: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd?: number;
+}
+
+/** Map from event type to its payload type (for future typed publish/subscribe) */
+export interface EventPayloadMap {
+  [EventTypes.AGENT_CREATED]: AgentCreatedPayload;
+  [EventTypes.AGENT_TURN_COMPLETED]: AgentTurnCompletedPayload;
+  [EventTypes.AGENT_ERROR]: AgentErrorPayload;
+  [EventTypes.WORKFLOW_STARTED]: WorkflowStartedPayload;
+  [EventTypes.WORKFLOW_COMPLETED]: WorkflowCompletedPayload;
+  [EventTypes.WORKFLOW_FAILED]: WorkflowFailedPayload;
+  [EventTypes.WORKFLOW_NODE_STARTED]: WorkflowNodeStartedPayload;
+  [EventTypes.WORKFLOW_NODE_COMPLETED]: WorkflowNodeCompletedPayload;
+  [EventTypes.GUARDRAIL_TRIGGERED]: GuardrailTriggeredPayload;
+  [EventTypes.TOKEN_CONSUMED]: TokenConsumedPayload;
+}

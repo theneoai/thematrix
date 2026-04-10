@@ -107,6 +107,7 @@ export class ProviderRouter {
   private secretManager: SecretManager;
   private config: ProviderRouterConfig;
   private roundRobinIndex = 0;
+  private providerLatency = new Map<ProviderName, number>();
 
   constructor(options: {
     registry: ProviderRegistry;
@@ -128,7 +129,7 @@ export class ProviderRouter {
     model: string,
     ownerId: string,
   ): Promise<LLMAdapter> {
-    const providers = this.getProviderOrder(preferredProvider);
+    const providers = this.getProviderOrder(preferredProvider, model);
 
     for (const providerConfig of providers) {
       try {
@@ -151,7 +152,7 @@ export class ProviderRouter {
     throw new Error(`No available provider for model ${model}`);
   }
 
-  private getProviderOrder(preferred: ProviderName): ProviderConfig[] {
+  private getProviderOrder(preferred: ProviderName, model?: string): ProviderConfig[] {
     const configs = this.config.providers;
 
     switch (this.config.strategy) {
@@ -168,12 +169,49 @@ export class ProviderRouter {
         return [...configs.slice(index), ...configs.slice(0, index)];
       }
 
-      case 'least-cost':
-      case 'least-latency':
+      case 'least-cost': {
+        // Sort by model pricing (input + output price), cheapest first
+        const sorted = [...configs].sort((a, b) => {
+          const pluginA = this.registry.get(a.provider);
+          const pluginB = this.registry.get(b.provider);
+          const priceA = this.getModelPrice(pluginA, model);
+          const priceB = this.getModelPrice(pluginB, model);
+          return priceA - priceB;
+        });
+        return sorted;
+      }
+
+      case 'least-latency': {
+        // Sort by last known health check latency, lowest first
+        const sortedByLatency = [...configs].sort((a, b) => {
+          const latencyA = this.providerLatency.get(a.provider) ?? Infinity;
+          const latencyB = this.providerLatency.get(b.provider) ?? Infinity;
+          return latencyA - latencyB;
+        });
+        return sortedByLatency;
+      }
+
       default:
         // 默认 priority 模式
         return configs;
     }
+  }
+
+  /**
+   * Update latency tracking for a provider (called after health checks or requests).
+   */
+  updateLatency(provider: ProviderName, latencyMs: number): void {
+    this.providerLatency.set(provider, latencyMs);
+  }
+
+  /**
+   * Get model price (input + output per million tokens) for cost-based routing.
+   */
+  private getModelPrice(plugin: ReturnType<ProviderRegistry['get']>, model?: string): number {
+    if (!plugin) return Infinity;
+    const modelInfo = plugin.models.find(m => m.id === model);
+    if (!modelInfo) return Infinity;
+    return (modelInfo.inputPricePerMToken ?? Infinity) + (modelInfo.outputPricePerMToken ?? Infinity);
   }
 
   private async createAdapter(config: ProviderConfig, model: string): Promise<LLMAdapter> {

@@ -126,6 +126,35 @@ export interface MonitorDataProviders {
   deleteGuardrail?: (id: string) => Promise<void>;
   setActiveEnvironment?: (name: string) => Promise<void>;
   runEvalSuite?: (suiteId: string) => Promise<{ runId: string }>;
+
+  /** Playground: interactive single-turn agent execution */
+  playgroundRunTurn?: (agentId: string, input: string, options?: {
+    sessionId?: string;
+    overrides?: { temperature?: number; model?: string };
+  }) => Promise<{
+    output: string;
+    tokensUsed: number;
+    toolCalls: string[];
+    durationMs: number;
+  }>;
+
+  /** Playground: get agent conversation history */
+  playgroundGetHistory?: (sessionId: string) => Promise<Array<{
+    role: string;
+    content: string;
+    timestamp: string;
+  }>>;
+
+  /** Playground: clear agent session */
+  playgroundClearSession?: (sessionId: string) => Promise<void>;
+
+  /** NL Workflow: create workflow from description */
+  createWorkflowFromNL?: (description: string) => Promise<{
+    workflow: unknown;
+    agents: unknown[];
+    reasoning: string;
+    confidence: number;
+  }>;
 }
 
 // ── Extended Provider Types ──
@@ -332,6 +361,14 @@ export class MonitorAPI {
     this.route('POST', '/api/eval/suites/:suiteId/run', this.handleRunEvalSuite.bind(this));
     this.route('GET', '/api/eval/runs/:runId', this.handleGetEvalResults.bind(this));
 
+    // Playground routes
+    this.route('POST', '/api/playground/turn', this.handlePlaygroundTurn.bind(this));
+    this.route('GET', '/api/playground/history/:sessionId', this.handlePlaygroundHistory.bind(this));
+    this.route('DELETE', '/api/playground/session/:sessionId', this.handlePlaygroundClearSession.bind(this));
+
+    // NL Workflow route
+    this.route('POST', '/api/workflows/from-nl', this.handleCreateWorkflowFromNL.bind(this));
+
     // Domain events
     this.route('GET', '/api/events', this.handleListEvents.bind(this));
     this.route('GET', '/api/events/stream', this.handleEventStream.bind(this));
@@ -534,7 +571,7 @@ export class MonitorAPI {
     if (!this.providers.approvalManager) return this.sendNotImplemented(res);
     try {
       const body = await this.parseBody(req);
-      await this.providers.approvalManager.approve(params.id, body.respondedBy);
+      await this.providers.approvalManager.approve(params.id, body.respondedBy as string | undefined);
       this.sendJson(res, 200, { status: 'approved' });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -546,7 +583,7 @@ export class MonitorAPI {
     if (!this.providers.approvalManager) return this.sendNotImplemented(res);
     try {
       const body = await this.parseBody(req);
-      await this.providers.approvalManager.reject(params.id, body.respondedBy);
+      await this.providers.approvalManager.reject(params.id, body.respondedBy as string | undefined);
       this.sendJson(res, 200, { status: 'rejected' });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1132,5 +1169,58 @@ export class MonitorAPI {
       }
       res.end();
     });
+  }
+
+  // ----------------------------------------------------------
+  // Playground Handlers
+  // ----------------------------------------------------------
+
+  private async handlePlaygroundTurn(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.providers.playgroundRunTurn) return this.sendNotImplemented(res);
+    try {
+      const body = await this.parseBody(req);
+      const result = await this.providers.playgroundRunTurn(body.agentId as string, body.input as string, body.options as {
+        sessionId?: string;
+        overrides?: { temperature?: number; model?: string };
+      } | undefined);
+      this.sendJson(res, 200, result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.sendJson(res, 500, { error: message });
+    }
+  }
+
+  private async handlePlaygroundHistory(_req: IncomingMessage, res: ServerResponse, params: Record<string, string>): Promise<void> {
+    if (!this.providers.playgroundGetHistory) return this.sendNotImplemented(res);
+    try {
+      const history = await this.providers.playgroundGetHistory(params.sessionId);
+      this.sendJson(res, 200, history);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.sendJson(res, 500, { error: message });
+    }
+  }
+
+  private async handlePlaygroundClearSession(_req: IncomingMessage, res: ServerResponse, params: Record<string, string>): Promise<void> {
+    if (!this.providers.playgroundClearSession) return this.sendNotImplemented(res);
+    try {
+      await this.providers.playgroundClearSession(params.sessionId);
+      this.sendJson(res, 200, { status: 'cleared' });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.sendJson(res, 500, { error: message });
+    }
+  }
+
+  private async handleCreateWorkflowFromNL(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.providers.createWorkflowFromNL) return this.sendNotImplemented(res);
+    try {
+      const body = await this.parseBody(req);
+      const result = await this.providers.createWorkflowFromNL(body.description as string);
+      this.sendJson(res, 200, result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.sendJson(res, 500, { error: message });
+    }
   }
 }

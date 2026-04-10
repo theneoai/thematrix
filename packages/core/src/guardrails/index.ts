@@ -30,7 +30,7 @@ const PII_PATTERNS: { name: string; pattern: RegExp }[] = [
   { name: 'email', pattern: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g },
   { name: 'phone', pattern: /\b(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g },
   { name: 'ssn', pattern: /\b\d{3}-\d{2}-\d{4}\b/g },
-  { name: 'credit-card', pattern: /\b(?:\d{4}[-\s]?){3}\d{4}\b/g },
+  { name: 'credit-card', pattern: /\b(?:4\d{3}|5[1-5]\d{2}|3[47]\d{2}|6(?:011|5\d{2}))[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b/g },
 ];
 
 /** Prompt injection patterns */
@@ -370,6 +370,7 @@ export class GuardrailRunner {
   private async checkCustomLlm(
     guardrail: GuardrailConfig,
     content: string,
+    rewriteDepth = 0,
   ): Promise<GuardrailResult> {
     if (!this.llmAdapter) {
       logger.warn(
@@ -446,18 +447,21 @@ export class GuardrailRunner {
 
       // If action is rewrite and there are violations, ask LLM to rewrite
       if (guardrail.action === 'rewrite' && !parsed.passed) {
-        rewrittenContent = await this.rewriteContent(content, guardrail, violations);
-        // Validate rewritten content against the same guardrail to prevent bypass
-        if (rewrittenContent) {
-          try {
-            const revalidation = await this.checkCustomLlm(guardrail, rewrittenContent);
-            if (!revalidation.passed) {
-              logger.warn(`Rewritten content still fails guardrail "${guardrail.name}", discarding rewrite`);
+        if (rewriteDepth >= 3) {
+          logger.warn(`Max rewrite depth reached for guardrail "${guardrail.name}", skipping rewrite`);
+        } else {
+          rewrittenContent = await this.rewriteContent(content, guardrail, violations);
+          if (rewrittenContent) {
+            try {
+              const revalidation = await this.checkCustomLlm(guardrail, rewrittenContent, rewriteDepth + 1);
+              if (!revalidation.passed) {
+                logger.warn(`Rewritten content still fails guardrail "${guardrail.name}", discarding rewrite`);
+                rewrittenContent = undefined;
+              }
+            } catch (revalErr) {
+              logger.warn(`Failed to validate rewritten content for guardrail "${guardrail.name}", discarding rewrite`);
               rewrittenContent = undefined;
             }
-          } catch (revalErr) {
-            logger.warn(`Failed to validate rewritten content for guardrail "${guardrail.name}", discarding rewrite`);
-            rewrittenContent = undefined;
           }
         }
       }

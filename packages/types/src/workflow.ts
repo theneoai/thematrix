@@ -14,7 +14,7 @@ export type WorkflowStatus =
   | 'cancelled' 
   | 'timed_out';
 
-export type ExecutionMode = 'dag' | 'state-machine' | 'dynamic';
+export type ExecutionMode = 'dag' | 'state-machine' | 'dynamic' | 'cognitive';
 
 export interface WorkflowDefinition {
   id: string;
@@ -33,6 +33,8 @@ export interface WorkflowDefinition {
   outputSchema?: Record<string, unknown>;
   /** Dynamic workflow configuration (required when mode is 'dynamic') */
   dynamicConfig?: DynamicWorkflowConfig;
+  /** Cognitive workflow configuration (required when mode is 'cognitive') */
+  cognitiveConfig?: CognitiveWorkflowConfig;
   /** 执行后端配置 (Local / Docker / SSH / K8s) */
   execution?: {
     backend: 'local' | 'docker' | 'ssh' | 'kubernetes';
@@ -153,6 +155,26 @@ export interface DynamicWorkflowConfig {
 }
 
 // ============================================================
+// Cognitive Workflow (Plan-Generate-Evaluate Pattern)
+// ============================================================
+
+/** Cognitive workflow follows Anthropic's plan-generate-evaluate pattern */
+export interface CognitiveWorkflowConfig {
+  /** The planner agent that decomposes the goal into steps */
+  plannerAgentId: string;
+  /** Generator agents that produce outputs */
+  generatorAgentIds: string[];
+  /** The evaluator agent that judges quality */
+  evaluatorAgentId: string;
+  /** Quality threshold (0-1), iterate until met or maxIterations reached */
+  qualityThreshold?: number;
+  /** Maximum plan-generate-evaluate iterations */
+  maxIterations?: number;
+  /** Metrics to evaluate (passed to evaluator agent as context) */
+  evaluationCriteria?: string[];
+}
+
+// ============================================================
 // Environment Management
 // ============================================================
 
@@ -196,4 +218,40 @@ export interface IApprovalManager {
   getStatus(approvalId: string): ApprovalRequest | undefined;
   waitForApproval(approvalId: string, timeoutMs?: number): Promise<ApprovalStatus>;
   listPending(): ApprovalRequest[];
+}
+
+// ============================================================
+// Workflow Checkpoint & Resume
+// ============================================================
+
+/** Snapshot of workflow state for durable checkpointing */
+export interface WorkflowCheckpoint {
+  /** Unique checkpoint ID */
+  id: string;
+  /** Workflow run ID */
+  runId: string;
+  /** Workflow definition ID */
+  workflowId: string;
+  /** IDs of nodes that have completed successfully */
+  completedNodes: string[];
+  /** Outputs from completed nodes */
+  nodeOutputs: Record<string, unknown>;
+  /** Workflow-level variables */
+  variables: Record<string, unknown>;
+  /** When this checkpoint was taken */
+  createdAt: Date;
+  /** Optimistic locking version (increments on each checkpoint) */
+  version: number;
+}
+
+/** Interface for checkpoint persistence */
+export interface ICheckpointStore {
+  /** Save a checkpoint (upsert by runId) */
+  save(checkpoint: WorkflowCheckpoint): Promise<void>;
+  /** Load the latest checkpoint for a workflow run */
+  load(runId: string): Promise<WorkflowCheckpoint | undefined>;
+  /** Delete checkpoint after successful workflow completion */
+  delete(runId: string): Promise<void>;
+  /** List all active checkpoints */
+  listActive(): Promise<WorkflowCheckpoint[]>;
 }
