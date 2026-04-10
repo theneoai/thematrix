@@ -14,7 +14,7 @@ export type WorkflowStatus =
   | 'cancelled' 
   | 'timed_out';
 
-export type ExecutionMode = 'dag' | 'state-machine' | 'dynamic';
+export type ExecutionMode = 'dag' | 'state-machine' | 'dynamic' | 'cognitive';
 
 export interface WorkflowDefinition {
   id: string;
@@ -33,6 +33,8 @@ export interface WorkflowDefinition {
   outputSchema?: Record<string, unknown>;
   /** Dynamic workflow configuration (required when mode is 'dynamic') */
   dynamicConfig?: DynamicWorkflowConfig;
+  /** Cognitive workflow configuration (required when mode is 'cognitive') */
+  cognitiveConfig?: CognitiveWorkflowConfig;
   /** 执行后端配置 (Local / Docker / SSH / K8s) */
   execution?: {
     backend: 'local' | 'docker' | 'ssh' | 'kubernetes';
@@ -150,6 +152,26 @@ export interface DynamicWorkflowConfig {
   availableAgents: string[];
   /** Maximum total handoffs before forced termination */
   maxHandoffs?: number;
+}
+
+// ============================================================
+// Cognitive Workflow (Plan-Generate-Evaluate Pattern)
+// ============================================================
+
+/** Cognitive workflow follows Anthropic's plan-generate-evaluate pattern */
+export interface CognitiveWorkflowConfig {
+  /** The planner agent that decomposes the goal into steps */
+  plannerAgentId: string;
+  /** Generator agents that produce outputs */
+  generatorAgentIds: string[];
+  /** The evaluator agent that judges quality */
+  evaluatorAgentId: string;
+  /** Quality threshold (0-1), iterate until met or maxIterations reached */
+  qualityThreshold?: number;
+  /** Maximum plan-generate-evaluate iterations */
+  maxIterations?: number;
+  /** Metrics to evaluate (passed to evaluator agent as context) */
+  evaluationCriteria?: string[];
 }
 
 // ============================================================

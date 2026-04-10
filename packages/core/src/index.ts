@@ -44,6 +44,10 @@ export * from './messaging/broker.js';
 export * from './workflow/engine.js';
 export * from './workflow/approval.js';
 export * from './workflow/dynamic.js';
+export { CognitiveWorkflowExecutor } from './workflow/cognitive.js';
+export { SqliteCheckpointStore } from './workflow/checkpoint.js';
+export { SelfHealingStrategy } from './workflow/self-healing.js';
+export { NLWorkflowCreator } from './workflow/nl-creator.js';
 
 // Policy
 export * from './policy/index.js';
