@@ -36,3 +36,14 @@ export {
   TokenEfficiencyMetric,
   LLMTrajectoryJudgeMetric,
 } from './trajectory.js';
+
+// Regression Detection
+export {
+  EvalRegressionDetector,
+  EvalHistoryStore,
+  type RegressionReport,
+  type MetricRegressionResult,
+  type RegressionSeverity,
+  type RegressionThresholds,
+  type EvalHistoryEntry,
+} from './regression.js';
