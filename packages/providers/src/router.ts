@@ -22,6 +22,27 @@ import type { SecretManager } from './secret.js';
 const logger = new Logger({ prefix: 'ProviderRouter' });
 
 /**
+ * Estimate token count for a text string.
+ *
+ * Uses language-aware heuristics:
+ * - CJK characters (Chinese/Japanese/Korean): ~1.5 chars per token
+ *   (each CJK character is typically a single token in most tokenizers)
+ * - Latin/ASCII text: ~4 chars per token (standard GPT tokenizer average)
+ * - Mixed text: weighted average based on CJK character ratio
+ *
+ * This is a conservative estimate intentionally; for precise billing-critical
+ * use cases, integrate tiktoken or a provider-specific token counting API.
+ */
+export function estimateTokens(text: string): number {
+  if (!text) return 0;
+  const cjkCount = (text.match(/[\u3000-\u9fff\uac00-\ud7af\uf900-\ufaff]/g) ?? []).length;
+  const cjkRatio = cjkCount / text.length;
+  // Blend: CJK-heavy text uses 1.5 chars/token, ASCII uses 4 chars/token
+  const charsPerToken = cjkRatio > 0.3 ? 1.5 : cjkRatio > 0.1 ? 2.5 : 4;
+  return Math.ceil(text.length / charsPerToken);
+}
+
+/**
  * Token-tracked LLM adapter wrapper
  * 包装底层 adapter，自动记录 token 消耗到 TokenPool
  */
@@ -55,20 +76,20 @@ class TrackedAdapter implements LLMAdapter {
 
   async *chatStream(request: ChatRequest): AsyncIterable<ChatStreamChunk> {
     // Pre-compute input tokens estimate once before streaming starts
-    const estimatedInputTokens = Math.ceil(
-      request.messages.reduce((sum, m) => sum + m.content.length, 0) / 4
+    const estimatedInputTokens = estimateTokens(
+      request.messages.reduce((sum, m) => sum + m.content, ''),
     );
 
-    let totalOutputChars = 0;
+    let totalOutputText = '';
     let lastTrackedOutputTokens = 0;
 
     for await (const chunk of this.inner.chatStream(request)) {
-      if (chunk.content) totalOutputChars += chunk.content.length;
+      if (chunk.content) totalOutputText += chunk.content;
       yield chunk;
 
       // Periodically track accumulated output tokens during streaming
       // to avoid a single large non-atomic update at the end
-      const currentEstimatedOutputTokens = Math.ceil(totalOutputChars / 4);
+      const currentEstimatedOutputTokens = estimateTokens(totalOutputText);
       const delta = currentEstimatedOutputTokens - lastTrackedOutputTokens;
       if (delta >= 100) {
         const consumption: TokenConsumption = {
@@ -84,7 +105,7 @@ class TrackedAdapter implements LLMAdapter {
     }
 
     // Final consumption: remaining output tokens + input tokens
-    const finalOutputTokens = Math.ceil(totalOutputChars / 4) - lastTrackedOutputTokens;
+    const finalOutputTokens = estimateTokens(totalOutputText) - lastTrackedOutputTokens;
     const consumption: TokenConsumption = {
       provider: this.provider as ProviderName,
       model: this.model,

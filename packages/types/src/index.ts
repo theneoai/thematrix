@@ -31,3 +31,6 @@ export * from './telemetry.js';
 
 // Export cognitive memory types
 export * from './cognitive-memory.js';
+
+// Export multi-tenant types
+export * from './tenant.js';

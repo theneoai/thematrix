@@ -39,6 +39,10 @@ export class HandoffManager {
   private llmAdapterFactory: (config: { provider: string; model: string }) => LLMAdapter;
   private telemetry?: ITelemetryProvider;
   private cognitiveMemory?: ICognitiveMemoryManager;
+  /**
+   * Tracks handoff counts per workflow run.
+   * Entries are cleaned up via cleanupWorkflow() when the workflow completes/fails.
+   */
   private handoffCount = new Map<string, number>();
 
   constructor(options: HandoffManagerOptions) {
@@ -179,6 +183,23 @@ export class HandoffManager {
    */
   resetHandoffCount(workflowRunId: string): void {
     this.handoffCount.delete(workflowRunId);
+  }
+
+  /**
+   * Release all resources associated with a completed or failed workflow run.
+   * Must be called by the workflow engine after a run reaches a terminal state
+   * (completed, failed, cancelled) to prevent unbounded Map growth.
+   */
+  cleanupWorkflow(workflowRunId: string): void {
+    this.handoffCount.delete(workflowRunId);
+    logger.debug(`Handoff state cleaned up for workflow ${workflowRunId}`);
+  }
+
+  /**
+   * Return number of tracked workflow runs (useful for monitoring/leak detection).
+   */
+  getTrackedWorkflowCount(): number {
+    return this.handoffCount.size;
   }
 
   private async createAgentRuntime(

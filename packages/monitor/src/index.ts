@@ -31,3 +31,6 @@ export type { HealthStatus, HealthCheckResult, AggregatedHealth } from './health
 
 export { MonitorServer } from './server.js';
 export type { MonitorServerOptions } from './server.js';
+
+export { AuthMiddleware, hasRole, WRITE_METHODS } from './auth.js';
+export type { AuthMode, AuthConfig, ApiKeyRole, ApiKeyEntry, AuthResult } from './auth.js';

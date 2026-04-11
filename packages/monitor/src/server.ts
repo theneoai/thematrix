@@ -9,11 +9,14 @@ import { MonitorAPI, type MonitorDataProviders } from './api.js';
 import { SSEManager } from './websocket.js';
 import { AlertManager, type AlertCallback } from './alerts.js';
 import { HealthAggregator, type HealthCheckResult } from './health.js';
+import { AuthMiddleware, type AuthConfig, hasRole } from './auth.js';
 
 export interface MonitorServerOptions {
   config: MonitorConfig;
   providers?: MonitorDataProviders;
   onAlert?: AlertCallback;
+  /** API authentication configuration. Default: no authentication (development). */
+  auth?: AuthConfig;
 }
 
 export class MonitorServer implements IMonitorServer {
@@ -23,6 +26,7 @@ export class MonitorServer implements IMonitorServer {
   private readonly sse: SSEManager;
   private readonly alerts: AlertManager;
   private readonly health: HealthAggregator;
+  private readonly auth: AuthMiddleware;
   private server: Server | null = null;
   private port = 0;
 
@@ -33,6 +37,7 @@ export class MonitorServer implements IMonitorServer {
     this.alerts = new AlertManager(options.onAlert);
     this.health = new HealthAggregator();
     this.sse = new SSEManager();
+    this.auth = new AuthMiddleware(options.auth ?? { mode: 'none' });
 
     // Wire alert rules from config
     if (options.config.alertRules) {
@@ -108,23 +113,40 @@ export class MonitorServer implements IMonitorServer {
 
     this.server = createServer(async (req, res) => {
       const url = req.url ?? '/';
+      const path = url.split('?')[0];
 
-      // SSE endpoint
-      if (url.startsWith('/api/events/stream')) {
-        this.sse.handleConnection(req, res);
-        return;
-      }
-
-      // Health endpoint with aggregated data
-      if (url === '/health') {
+      // Health endpoint is always public (bypass auth)
+      if (path === '/health') {
         try {
           const healthResult = await this.health.checkAll();
           const statusCode = healthResult.status === 'healthy' ? 200
             : healthResult.status === 'degraded' ? 200 : 503;
           this.api.sendJson(res, statusCode, healthResult);
-        } catch (err) {
+        } catch {
           this.api.sendJson(res, 503, { status: 'unhealthy', error: 'Health check failed' });
         }
+        return;
+      }
+
+      // Authenticate all other requests
+      const authResult = this.auth.authenticate(req);
+      if (!authResult.authenticated) {
+        this.auth.sendUnauthorized(res, authResult.reason);
+        return;
+      }
+
+      // Enforce developer role for write operations (POST/PUT/PATCH/DELETE)
+      const method = req.method ?? 'GET';
+      if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+        if (authResult.role && !hasRole(authResult.role, 'developer')) {
+          this.auth.sendForbidden(res, 'developer', authResult.role);
+          return;
+        }
+      }
+
+      // SSE endpoint
+      if (path.startsWith('/api/events/stream')) {
+        this.sse.handleConnection(req, res);
         return;
       }
 
